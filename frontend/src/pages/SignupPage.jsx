@@ -1,0 +1,149 @@
+import React, { useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
+import { Eye, EyeOff, UserPlus, Shield } from 'lucide-react';
+
+export default function SignupPage() {
+  const [full_name, setFullName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [position, setPosition] = useState('');
+  const [showPass, setShowPass] = useState(false);
+  const [showConfirmPass, setShowConfirmPass] = useState(false);
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const { signup } = useAuth();
+  const navigate = useNavigate();
+
+  const handleSubmit = async e => {
+    e.preventDefault();
+    setError('');
+    
+    if (!full_name || !email || !password || !confirmPassword) {
+      setError('Please fill in all required fields');
+      return;
+    }
+    
+    if (password !== confirmPassword) {
+      setError('Passwords do not match');
+      return;
+    }
+    
+    if (password.length < 8) {
+      setError('Password must be at least 8 characters');
+      return;
+    }
+    
+    setLoading(true);
+    try {
+      const user = await signup(full_name, email, password, position);
+      navigate(user.role === 'super_admin' ? '/admin' : '/my-records');
+    } catch (err) {
+      setError(err.response?.data?.error || 'Signup failed. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="login-page">
+      {/* Left branding panel */}
+      <div className="login-left">
+        <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:'auto'}}>
+          <div className="logo-icon" style={{width:40,height:40,fontSize:15}}>YD</div>
+          <div>
+            <div style={{color:'#fff',fontWeight:700,fontSize:16,fontFamily:'Space Grotesk,sans-serif'}}>YID Due Ledger</div>
+            <div style={{color:'rgba(255,255,255,.4)',fontSize:11}}>Dues Management Platform</div>
+          </div>
+        </div>
+
+        <div style={{flex:1,display:'flex',flexDirection:'column',justifyContent:'center',paddingBottom:36}}>
+          <div style={{color:'rgba(255,255,255,.45)',fontSize:11,fontWeight:600,textTransform:'uppercase',letterSpacing:'1.5px',marginBottom:14}}>
+            Pilot Programme · Lagos & South-West
+          </div>
+          <h1 style={{color:'#fff',fontSize:32,fontFamily:'Space Grotesk,sans-serif',fontWeight:700,lineHeight:1.15,marginBottom:14}}>
+            Join our community today.
+          </h1>
+          <p style={{color:'rgba(255,255,255,.5)',fontSize:14,lineHeight:1.65,marginBottom:28}}>
+            Create an account to manage your dues and pledges with ease.
+          </p>
+          {['Verify monthly dues status at any time','Track program and other pledges','Secure portal — your data only'].map((t,i) => (
+            <div key={i} style={{display:'flex',gap:9,color:'rgba(255,255,255,.65)',fontSize:13,marginBottom:10}}>
+              <span style={{color:'#4dc47b',fontWeight:700,marginTop:1}}>✓</span>{t}
+            </div>
+          ))}
+        </div>
+
+        <div style={{color:'rgba(255,255,255,.25)',fontSize:11,borderTop:'1px solid rgba(255,255,255,.08)',paddingTop:16}}>
+          Lagos & South-West Region Pilot · 2025
+        </div>
+      </div>
+
+      {/* Right form panel */}
+      <div className="login-right">
+        <div className="login-form-box">
+          <div style={{display:'flex',alignItems:'center',gap:7,marginBottom:7}}>
+            <Shield size={18} color="var(--green-600)"/>
+            <span style={{fontSize:13,fontWeight:500,color:'var(--green-600)'}}>Secure Member Portal</span>
+          </div>
+          <h2 className="login-title">Create your account</h2>
+          <p className="login-subtitle">Enter your details to get started.</p>
+
+          {error && <div className="alert alert-error">{error}</div>}
+
+          <form onSubmit={handleSubmit}>
+            <div className="form-group">
+              <label className="form-label">Full Name</label>
+              <input type="text" placeholder="John Doe" value={full_name}
+                onChange={e => setFullName(e.target.value)} autoComplete="name"/>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Email Address</label>
+              <input type="email" placeholder="you@example.com" value={email}
+                onChange={e => setEmail(e.target.value)} autoComplete="email"/>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Position (Optional)</label>
+              <input type="text" placeholder="Your role" value={position}
+                onChange={e => setPosition(e.target.value)}/>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Password</label>
+              <div style={{position:'relative'}}>
+                <input type={showPass ? 'text':'password'} placeholder="Minimum 8 characters"
+                  value={password} onChange={e => setPassword(e.target.value)}
+                  autoComplete="new-password" style={{paddingRight:42}}/>
+                <button type="button" onClick={() => setShowPass(!showPass)}
+                  style={{position:'absolute',right:11,top:'50%',transform:'translateY(-50%)',
+                    background:'none',border:'none',color:'var(--slate-400)',cursor:'pointer',padding:2}}>
+                  {showPass ? <EyeOff size={16}/> : <Eye size={16}/>}
+                </button>
+              </div>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Confirm Password</label>
+              <div style={{position:'relative'}}>
+                <input type={showConfirmPass ? 'text':'password'} placeholder="Confirm your password"
+                  value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)}
+                  autoComplete="new-password" style={{paddingRight:42}}/>
+                <button type="button" onClick={() => setShowConfirmPass(!showConfirmPass)}
+                  style={{position:'absolute',right:11,top:'50%',transform:'translateY(-50%)',
+                    background:'none',border:'none',color:'var(--slate-400)',cursor:'pointer',padding:2}}>
+                  {showConfirmPass ? <EyeOff size={16}/> : <Eye size={16}/>}
+                </button>
+              </div>
+            </div>
+            <button type="submit" className="btn btn-primary btn-lg" style={{width:'100%',marginTop:4}} disabled={loading}>
+              <UserPlus size={15}/> {loading ? 'Creating Account…' : 'Sign Up'}
+            </button>
+          </form>
+
+          <div style={{marginTop:24,textAlign:'center',fontSize:14,color:'var(--slate-500)'}}>
+            Already have an account? <Link to="/login" style={{color:'var(--green-600)',fontWeight:600}}>Sign in</Link>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
