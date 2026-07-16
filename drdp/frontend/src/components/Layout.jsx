@@ -35,7 +35,7 @@ export default function Layout() {
         <div className="sidebar-logo">
           <div className="logo-row">
             <div className="logo-icon">DR</div>
-            <div><div className="logo-text">DRDP</div><div className="logo-sub">Records Platform</div></div>
+            <div><div className="logo-text">YID</div><div className="logo-sub">Due Ledger</div></div>
           </div>
         </div>
 

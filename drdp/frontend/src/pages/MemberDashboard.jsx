@@ -38,7 +38,13 @@ export default function MemberDashboard() {
     <div>
       {/* Profile card */}
       <div className="profile-card">
-        <div className="profile-avatar">{initials}</div>
+        <div className="profile-avatar">
+          {user?.profile_picture ? (
+            <img src={user.profile_picture} alt={user.full_name} style={{width:'100%',height:'100%',objectFit:'cover'}}/>
+          ) : (
+            initials
+          )}
+        </div>
         <div className="profile-name">{user?.full_name}</div>
         <div className="profile-id"><CreditCard size={11}/> {user?.user_id_code}</div>
         <div className="profile-meta">

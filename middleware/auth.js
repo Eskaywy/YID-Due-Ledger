@@ -1,7 +1,7 @@
 const jwt = require('jsonwebtoken');
 const { getDb } = require('../db');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'drdp-secret-key-change-in-production';
+const JWT_SECRET = process.env.JWT_SECRET || 'yid-due-ledger-secret-key-change-in-production';
 
 function authenticate(req, res, next) {
   const authHeader = req.headers.authorization;

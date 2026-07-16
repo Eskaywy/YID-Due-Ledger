@@ -18,6 +18,14 @@ async function initDatabase() {
   }
   db.run('PRAGMA foreign_keys=ON;');
   createTables();
+  
+  // Migration: Add profile_picture column if it doesn't exist
+  try {
+    db.exec('SELECT profile_picture FROM users LIMIT 1');
+  } catch {
+    db.run('ALTER TABLE users ADD COLUMN profile_picture TEXT');
+  }
+  
   seedData();
   saveDatabase();
   console.log('Database initialized');
@@ -41,8 +49,7 @@ function createTables() {
     position TEXT,
     region_id TEXT REFERENCES regions(id),
     dept_code TEXT DEFAULT 'MED',
-    role TEXT DEFAULT 'member' CHECK(role IN ('member','super_admin')),
-    is_active INTEGER DEFAULT 1,
+    role TEXT DEFAULT 'member' CHECK(role IN ('member','super_admin')),    profile_picture TEXT,    is_active INTEGER DEFAULT 1,
     created_at TEXT DEFAULT (datetime('now')),
     updated_at TEXT DEFAULT (datetime('now'))
   )`);

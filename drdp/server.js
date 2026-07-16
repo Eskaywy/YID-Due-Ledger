@@ -15,6 +15,9 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use('/api/', rateLimit({ windowMs: 15 * 60 * 1000, max: 300 }));
 app.use('/api/auth/', rateLimit({ windowMs: 15 * 60 * 1000, max: 20 }));
 
+// Serve uploaded files
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
 app.use('/api/auth',    require('./routes/auth'));
 app.use('/api/members', require('./routes/members'));
 app.use('/api/admin',   require('./routes/admin'));
@@ -38,5 +41,5 @@ app.use((err, req, res, next) => {
 });
 
 initDatabase().then(() => {
-  app.listen(PORT, () => console.log(`DRDP running on http://localhost:${PORT}`));
+  app.listen(PORT, () => console.log(`YID Due Ledger running on http://localhost:${PORT}`));
 }).catch(err => { console.error('DB init failed:', err); process.exit(1); });
