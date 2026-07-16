@@ -38,7 +38,7 @@ LGS-MED-202506-0002,adewale@drdp.ng,6,2025,2000,paid,,,,
 LGS-MED-202506-0002,adewale@drdp.ng,,,,,Annual Dinner 2025,5000,paid,2025-03-15`;
     const blob = new Blob([csv], { type:'text/csv' });
     const url  = URL.createObjectURL(blob);
-    const a    = document.createElement('a'); a.href=url; a.download='drdp-upload-template.csv'; a.click();
+    const a    = document.createElement('a'); a.href=url; a.download='yid-due-ledger-upload-template.csv'; a.click();
     URL.revokeObjectURL(url);
   };
 

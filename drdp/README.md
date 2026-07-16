@@ -1,4 +1,4 @@
-# DRDP — Departmental Records Digitization Platform
+# YID Due Ledger
 
 A secure, full-stack web application for the Lagos & South-West Region pilot programme.
 Members verify their own records; the Super Admin manages everything.
@@ -193,6 +193,6 @@ IDs are auto-generated and sequential per region + department + month.
 | Variable     | Default                              | Description          |
 |--------------|--------------------------------------|----------------------|
 | PORT         | 3001                                 | Server port          |
-| JWT_SECRET   | drdp-secret-key-change-in-production | **Change in prod!**  |
+| JWT_SECRET   | yid-due-ledger-secret-key-change-in-production | **Change in prod!**  |
 | CLIENT_URL   | http://localhost:5173                | CORS allowed origin  |
 | NODE_ENV     | (unset)                              | Set to `production`  |

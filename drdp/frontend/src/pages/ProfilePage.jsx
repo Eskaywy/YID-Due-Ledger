@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import API from '../utils/api';
-import { User, Lock, CreditCard, MapPin, Briefcase, Calendar, Eye, EyeOff } from 'lucide-react';
+import { User, Lock, CreditCard, MapPin, Briefcase, Calendar, Eye, EyeOff, Upload, Trash2 } from 'lucide-react';
 
 export default function ProfilePage() {
   const { user, refreshUser } = useAuth();
@@ -13,6 +13,12 @@ export default function ProfilePage() {
   const [pwError, setPwError] = useState('');
   const [pwSuccess, setPwSuccess] = useState('');
   const [saving, setSaving]   = useState(false);
+
+  // Picture upload state
+  const [picError, setPicError] = useState('');
+  const [picSuccess, setPicSuccess] = useState('');
+  const [picLoading, setPicLoading] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState(user?.profile_picture || '');
 
   const initials = user?.full_name?.split(' ').slice(0,2).map(n=>n[0]).join('').toUpperCase() || 'U';
 
@@ -29,6 +35,54 @@ export default function ProfilePage() {
     } catch (err) {
       setPwError(err.response?.data?.error || 'Failed to update password.');
     } finally { setSaving(false); }
+  };
+
+  const handlePictureUpload = async e => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Validate file size (5MB)
+    if (file.size > 5 * 1024 * 1024) {
+      setPicError('File size must not exceed 5MB');
+      return;
+    }
+
+    // Validate file type
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+    if (!allowedTypes.includes(file.type)) {
+      setPicError('Only JPEG, PNG, WebP, and GIF formats are allowed');
+      return;
+    }
+
+    setPicError(''); setPicSuccess('');
+    setPicLoading(true);
+
+    try {
+      const formData = new FormData();
+      formData.append('picture', file);
+      const res = await API.post('/auth/upload-picture', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      setPicSuccess('Profile picture updated successfully!');
+      setPreviewUrl(res.data.profile_picture);
+      await refreshUser();
+    } catch (err) {
+      setPicError(err.response?.data?.error || 'Failed to upload picture');
+    } finally { setPicLoading(false); }
+  };
+
+  const handleRemovePicture = async () => {
+    if (!window.confirm('Remove profile picture?')) return;
+    setPicError(''); setPicSuccess('');
+    setPicLoading(true);
+    try {
+      await API.post('/auth/remove-picture');
+      setPicSuccess('Profile picture removed');
+      setPreviewUrl('');
+      await refreshUser();
+    } catch (err) {
+      setPicError(err.response?.data?.error || 'Failed to remove picture');
+    } finally { setPicLoading(false); }
   };
 
   const InfoRow = ({ icon, label, value }) => (
@@ -67,7 +121,13 @@ export default function ProfilePage() {
     <div style={{maxWidth:640}}>
       {/* Profile header */}
       <div className="profile-card" style={{marginBottom:20}}>
-        <div className="profile-avatar">{initials}</div>
+        <div className="profile-avatar">
+          {previewUrl || user?.profile_picture ? (
+            <img src={previewUrl || user?.profile_picture} alt={user?.full_name} style={{width:'100%',height:'100%',objectFit:'cover'}}/>
+          ) : (
+            initials
+          )}
+        </div>
         <div className="profile-name">{user?.full_name}</div>
         <div className="profile-id"><CreditCard size={11}/> {user?.user_id_code}</div>
         <div className="profile-meta">
@@ -90,6 +150,9 @@ export default function ProfilePage() {
         <button className={`tab ${tab==='profile'?'active':''}`}  onClick={() => setTab('profile')}>
           <User size={13} style={{verticalAlign:'middle',marginRight:5}}/> Profile Info
         </button>
+        <button className={`tab ${tab==='picture'?'active':''}`}  onClick={() => setTab('picture')}>
+          <Upload size={13} style={{verticalAlign:'middle',marginRight:5}}/> Profile Picture
+        </button>
         <button className={`tab ${tab==='password'?'active':''}`} onClick={() => setTab('password')}>
           <Lock size={13} style={{verticalAlign:'middle',marginRight:5}}/> Change Password
         </button>
@@ -111,6 +174,51 @@ export default function ProfilePage() {
             <p style={{fontSize:12.5,color:'var(--slate-400)'}}>
               To update your profile details, please contact the Super Administrator.
             </p>
+          </div>
+        </div>
+      )}
+
+      {/* Profile picture */}
+      {tab === 'picture' && (
+        <div className="card">
+          <div className="card-header"><span className="card-title">Profile Picture</span></div>
+          <div className="card-body">
+            {picError   && <div className="alert alert-error">{picError}</div>}
+            {picSuccess && <div className="alert alert-success">{picSuccess}</div>}
+            
+            {/* Current picture preview */}
+            <div style={{textAlign:'center',marginBottom:24}}>
+              <div style={{width:120,height:120,borderRadius:12,background:'var(--slate-100)',display:'inline-flex',alignItems:'center',justifyContent:'center',overflow:'hidden',marginBottom:12,border:'2px solid var(--slate-200)'}}>
+                {previewUrl || user?.profile_picture ? (
+                  <img src={previewUrl || user?.profile_picture} alt="Profile" style={{width:'100%',height:'100%',objectFit:'cover'}}/>
+                ) : (
+                  <User size={40} color="var(--slate-400)"/>
+                )}
+              </div>
+              <p style={{fontSize:13,color:'var(--slate-500)',marginBottom:12}}>Current Profile Picture</p>
+              {(previewUrl || user?.profile_picture) && (
+                <button type="button" onClick={handleRemovePicture} className="btn btn-outline btn-sm" disabled={picLoading}>
+                  <Trash2 size={12}/> Remove Picture
+                </button>
+              )}
+            </div>
+
+            {/* Upload form */}
+            <div style={{borderTop:'1px solid var(--slate-100)',paddingTop:20}}>
+              <label className="form-label">Choose new picture</label>
+              <div style={{display:'flex',flexDirection:'column',gap:10}}>
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/gif"
+                  onChange={handlePictureUpload}
+                  disabled={picLoading}
+                  style={{padding:10,border:'1px solid var(--slate-200)',borderRadius:6}}
+                />
+                <p style={{fontSize:12,color:'var(--slate-400)'}}>
+                  Supported formats: JPEG, PNG, WebP, GIF · Max size: 5 MB
+                </p>
+              </div>
+            </div>
           </div>
         </div>
       )}

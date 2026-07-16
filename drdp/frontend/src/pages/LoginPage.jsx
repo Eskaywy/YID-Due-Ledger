@@ -36,7 +36,7 @@ export default function LoginPage() {
         <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:'auto'}}>
           <div className="logo-icon" style={{width:40,height:40,fontSize:15}}>DR</div>
           <div>
-            <div style={{color:'#fff',fontWeight:700,fontSize:16,fontFamily:'Space Grotesk,sans-serif'}}>DRDP</div>
+            <div style={{color:'#fff',fontWeight:700,fontSize:16,fontFamily:'Space Grotesk,sans-serif'}}>YID Due Ledger</div>
             <div style={{color:'rgba(255,255,255,.4)',fontSize:11}}>Departmental Records Platform</div>
           </div>
         </div>

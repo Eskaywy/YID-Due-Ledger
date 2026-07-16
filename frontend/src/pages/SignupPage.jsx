@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Eye, EyeOff, UserPlus, Shield } from 'lucide-react';
+import API from '../utils/api';
 
 export default function SignupPage() {
   const [full_name, setFullName] = useState('');
@@ -9,6 +10,9 @@ export default function SignupPage() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [position, setPosition] = useState('');
+  const [region_id, setRegionId] = useState('');
+  const [dept_code, setDeptCode] = useState('');
+  const [regions, setRegions] = useState([]);
   const [showPass, setShowPass] = useState(false);
   const [showConfirmPass, setShowConfirmPass] = useState(false);
   const [error, setError] = useState('');
@@ -16,11 +20,15 @@ export default function SignupPage() {
   const { signup } = useAuth();
   const navigate = useNavigate();
 
+  useEffect(() => {
+    API.get('/auth/regions').then(r => setRegions(r.data)).catch(() => {});
+  }, []);
+
   const handleSubmit = async e => {
     e.preventDefault();
     setError('');
     
-    if (!full_name || !email || !password || !confirmPassword) {
+    if (!full_name || !email || !password || !confirmPassword || !position || !region_id || !dept_code) {
       setError('Please fill in all required fields');
       return;
     }
@@ -37,7 +45,7 @@ export default function SignupPage() {
     
     setLoading(true);
     try {
-      const user = await signup(full_name, email, password, position);
+      const user = await signup(full_name, email, password, position, region_id, dept_code);
       navigate(user.role === 'super_admin' ? '/admin' : '/my-records');
     } catch (err) {
       setError(err.response?.data?.error || 'Signup failed. Please try again.');
@@ -104,9 +112,27 @@ export default function SignupPage() {
                 onChange={e => setEmail(e.target.value)} autoComplete="email"/>
             </div>
             <div className="form-group">
-              <label className="form-label">Position (Optional)</label>
-              <input type="text" placeholder="Your role" value={position}
-                onChange={e => setPosition(e.target.value)}/>
+              <label className="form-label">Position *</label>
+              <select value={position} onChange={e => setPosition(e.target.value)} required>
+                <option value="">Select your position</option>
+                <option value="Leader">Leader</option>
+                <option value="Member">Member</option>
+              </select>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Region *</label>
+              <select value={region_id} onChange={e => setRegionId(e.target.value)} required>
+                <option value="">Select your region</option>
+                {regions.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+              </select>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Department *</label>
+              <select value={dept_code} onChange={e => setDeptCode(e.target.value)} required>
+                <option value="">Select your department</option>
+                <option value="MED">Media</option>
+                <option value="INF">Information</option>
+              </select>
             </div>
             <div className="form-group">
               <label className="form-label">Password</label>
