@@ -1,7 +1,7 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
-const { getDb, saveDatabase, generateUserId } = require('../db');
+const { db, generateUserId } = require('../db');
 const { authenticate, generateToken } = require('../middleware/auth');
 const { auditLog } = require('../middleware/audit');
 
@@ -12,44 +12,52 @@ router.post('/login', async (req, res) => {
     const { email, password } = req.body;
     if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
 
-    const db = getDb();
-    const rows = db.exec(`
-      SELECT u.*, r.name as region_name, r.code as region_code
-      FROM users u LEFT JOIN regions r ON u.region_id = r.id
-      WHERE u.email=? AND u.is_active=1`, [email.toLowerCase().trim()]);
+    const usersSnapshot = await db.collection('users').where('email', '==', email.toLowerCase().trim()).where('isActive', '==', true).get();
+    if (usersSnapshot.empty) return res.status(401).json({ error: 'Invalid email or password' });
 
-    if (!rows[0]?.values?.length) return res.status(401).json({ error: 'Invalid email or password' });
-
-    const cols = rows[0].columns;
-    const user = {};
-    cols.forEach((c, i) => user[c] = rows[0].values[0][i]);
-
-    const valid = await bcrypt.compare(password, user.password_hash);
+    const userDoc = usersSnapshot.docs[0];
+    const user = userDoc.data();
+    const valid = await bcrypt.compare(password, user.passwordHash);
     if (!valid) return res.status(401).json({ error: 'Invalid email or password' });
 
+    // Get region data
+    let regionName = null, regionCode = null;
+    if (user.regionId) {
+      const regionDoc = await db.collection('regions').doc(user.regionId).get();
+      if (regionDoc.exists) {
+        regionName = regionDoc.data().name;
+        regionCode = regionDoc.data().code;
+      }
+    }
+
     const token = generateToken(user.id);
-    const { password_hash, ...safeUser } = user;
-    res.json({ token, user: safeUser });
+    const { passwordHash, ...safeUser } = user;
+    res.json({ token, user: { ...safeUser, regionName, regionCode } });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Login failed' });
   }
 });
 
-router.get('/me', authenticate, (req, res) => {
+router.get('/me', authenticate, async (req, res) => {
   try {
-    const db = getDb();
-    const rows = db.exec(`
-      SELECT u.id, u.user_id_code, u.full_name, u.email, u.position, u.role, u.dept_code, u.is_active, u.created_at,
-             r.name as region_name, r.code as region_code, r.id as region_id
-      FROM users u LEFT JOIN regions r ON u.region_id = r.id
-      WHERE u.id=?`, [req.user.id]);
-    if (!rows[0]?.values?.length) return res.status(404).json({ error: 'User not found' });
-    const cols = rows[0].columns;
-    const user = {};
-    cols.forEach((c, i) => user[c] = rows[0].values[0][i]);
-    res.json(user);
-  } catch {
+    const userDoc = await db.collection('users').doc(req.user.id).get();
+    if (!userDoc.exists) return res.status(404).json({ error: 'User not found' });
+    const user = userDoc.data();
+
+    let regionName = null, regionCode = null, regionId = user.regionId;
+    if (regionId) {
+      const regionDoc = await db.collection('regions').doc(regionId).get();
+      if (regionDoc.exists) {
+        regionName = regionDoc.data().name;
+        regionCode = regionDoc.data().code;
+      }
+    }
+
+    const { passwordHash, ...safeUser } = user;
+    res.json({ ...safeUser, regionName, regionCode, regionId });
+  } catch (err) {
+    console.error(err);
     res.status(500).json({ error: 'Failed to fetch profile' });
   }
 });
@@ -67,11 +75,9 @@ router.post('/signup', async (req, res) => {
       return res.status(400).json({ error: 'Password must be at least 8 characters' });
     }
 
-    const db = getDb();
-    
     // Check if email already exists
-    const existingEmail = db.exec('SELECT id FROM users WHERE email=?', [email.toLowerCase().trim()]);
-    if (existingEmail[0]?.values?.length) {
+    const existingEmailSnapshot = await db.collection('users').where('email', '==', email.toLowerCase().trim()).get();
+    if (!existingEmailSnapshot.empty) {
       return res.status(400).json({ error: 'Email already registered' });
     }
 
@@ -82,35 +88,47 @@ router.post('/signup', async (req, res) => {
     // Get default region if not provided (Lagos region)
     let finalRegionId = region_id;
     if (!finalRegionId) {
-      const defaultRegion = db.exec('SELECT id FROM regions WHERE code=?', ['LGS']);
-      if (defaultRegion[0]?.values?.length) {
-        finalRegionId = defaultRegion[0].values[0][0];
+      const defaultRegionSnapshot = await db.collection('regions').where('code', '==', 'LGS').get();
+      if (!defaultRegionSnapshot.empty) {
+        finalRegionId = defaultRegionSnapshot.docs[0].id;
       }
     }
     
     // Generate user ID code
-    const user_id_code = generateUserId('LGS', 'MED'); // Default LGS MED for now
+    const user_id_code = await generateUserId('LGS', 'MED'); // Default LGS MED for now
     
-    db.run(`
-      INSERT INTO users (id, user_id_code, full_name, email, password_hash, position, region_id, dept_code, role, is_active)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'member', 1)
-    `, [userId, user_id_code, full_name.trim(), email.toLowerCase().trim(), passwordHash, position || null, finalRegionId, 'MED']);
-    
-    saveDatabase();
+    await db.collection('users').doc(userId).set({
+      id: userId,
+      userIdCode: user_id_code,
+      fullName: full_name.trim(),
+      email: email.toLowerCase().trim(),
+      passwordHash,
+      position: position || null,
+      regionId: finalRegionId,
+      deptCode: 'MED',
+      role: 'member',
+      isActive: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
     
     // Auto login after signup
-    const rows = db.exec(`
-      SELECT u.*, r.name as region_name, r.code as region_code
-      FROM users u LEFT JOIN regions r ON u.region_id = r.id
-      WHERE u.id=?`, [userId]);
-      
-    const cols = rows[0].columns;
-    const user = {};
-    cols.forEach((c, i) => user[c] = rows[0].values[0][i]);
+    const userDoc = await db.collection('users').doc(userId).get();
+    const user = userDoc.data();
+    
+    // Get region data
+    let regionName = null, regionCode = null;
+    if (user.regionId) {
+      const regionDoc = await db.collection('regions').doc(user.regionId).get();
+      if (regionDoc.exists) {
+        regionName = regionDoc.data().name;
+        regionCode = regionDoc.data().code;
+      }
+    }
     
     const token = generateToken(user.id);
-    const { password_hash, ...safeUser } = user;
-    res.json({ token, user: safeUser });
+    const { passwordHash: _, ...safeUser } = user;
+    res.json({ token, user: { ...safeUser, regionName, regionCode } });
     
   } catch (err) {
     console.error(err);
@@ -124,18 +142,23 @@ router.put('/change-password', authenticate, async (req, res) => {
     if (!currentPassword || !newPassword) return res.status(400).json({ error: 'Both passwords required' });
     if (newPassword.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
 
-    const db = getDb();
-    const rows = db.exec('SELECT password_hash FROM users WHERE id=?', [req.user.id]);
-    const hash = rows[0]?.values[0][0];
-    const valid = await bcrypt.compare(currentPassword, hash);
+    const userDoc = await db.collection('users').doc(req.user.id).get();
+    if (!userDoc.exists) return res.status(404).json({ error: 'User not found' });
+    const user = userDoc.data();
+
+    const valid = await bcrypt.compare(currentPassword, user.passwordHash);
     if (!valid) return res.status(401).json({ error: 'Current password is incorrect' });
 
     const newHash = await bcrypt.hash(newPassword, 10);
-    db.run("UPDATE users SET password_hash=?, updated_at=datetime('now') WHERE id=?", [newHash, req.user.id]);
-    saveDatabase();
-    auditLog(req.user.id, 'CHANGE_PASSWORD', 'users', req.user.id, null, null);
+    await db.collection('users').doc(req.user.id).update({
+      passwordHash: newHash,
+      updatedAt: new Date().toISOString(),
+    });
+
+    await auditLog(req.user.id, 'CHANGE_PASSWORD', 'users', req.user.id, null, null);
     res.json({ message: 'Password updated successfully' });
-  } catch {
+  } catch (err) {
+    console.error(err);
     res.status(500).json({ error: 'Failed to change password' });
   }
 });

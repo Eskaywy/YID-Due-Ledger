@@ -6,47 +6,73 @@ const { parse } = require('csv-parse/sync');
 const XLSX = require('xlsx');
 const path = require('path');
 const fs = require('fs');
-const { getDb, saveDatabase, generateUserId } = require('../db');
+const { db, generateUserId } = require('../db');
 const { authenticate, requireSuperAdmin } = require('../middleware/auth');
 const { auditLog } = require('../middleware/audit');
 
 const router = express.Router();
 const upload = multer({ dest: 'uploads/', limits: { fileSize: 5 * 1024 * 1024 } });
 
-function rows2obj(rows) {
-  if (!rows[0]?.values?.length) return [];
-  const cols = rows[0].columns;
-  return rows[0].values.map(vals => {
-    const obj = {};
-    cols.forEach((c, i) => obj[c] = vals[i]);
-    return obj;
-  });
-}
-
 // Dashboard stats
-router.get('/stats', authenticate, requireSuperAdmin, (req, res) => {
+router.get('/stats', authenticate, requireSuperAdmin, async (req, res) => {
   try {
-    const db = getDb();
-    const totalMembers   = db.exec(`SELECT COUNT(*) FROM users WHERE role='member' AND is_active=1`)[0]?.values[0][0] || 0;
-    const paidMembers    = db.exec(`SELECT COUNT(DISTINCT user_id) FROM monthly_dues WHERE status='paid'`)[0]?.values[0][0] || 0;
-    const arrearsMembers = db.exec(`SELECT COUNT(DISTINCT user_id) FROM monthly_dues WHERE status='arrears'`)[0]?.values[0][0] || 0;
-    const totalCollected = db.exec(`SELECT COALESCE(SUM(amount),0) FROM monthly_dues WHERE status='paid'`)[0]?.values[0][0] || 0;
-    const recentActivity = rows2obj(db.exec(`
-      SELECT al.action, al.created_at, al.target_table, u.full_name as actor_name
-      FROM audit_logs al LEFT JOIN users u ON al.actor_id=u.id
-      ORDER BY al.created_at DESC LIMIT 10`));
+    const membersSnapshot = await db.collection('users').where('role', '==', 'member').where('isActive', '==', true).get();
+    const totalMembers = membersSnapshot.size;
 
-    // Per-region breakdown
-    const regionStats = rows2obj(db.exec(`
-      SELECT r.name, r.code,
-        COUNT(DISTINCT u.id) as member_count,
-        COALESCE(SUM(CASE WHEN d.status='paid' THEN d.amount ELSE 0 END),0) as collected
-      FROM regions r
-      LEFT JOIN users u ON u.region_id=r.id AND u.role='member' AND u.is_active=1
-      LEFT JOIN monthly_dues d ON d.user_id=u.id
-      GROUP BY r.id ORDER BY r.name`));
+    const duesSnapshot = await db.collection('monthlyDues').get();
+    let paidMembersSet = new Set(), arrearsMembersSet = new Set(), totalCollected = 0;
+    duesSnapshot.forEach(doc => {
+      const due = doc.data();
+      if (due.status === 'paid') {
+        totalCollected += due.amount;
+        paidMembersSet.add(due.userId);
+      } else if (due.status === 'arrears') {
+        arrearsMembersSet.add(due.userId);
+      }
+    });
 
-    res.json({ total_members: totalMembers, paid_members: paidMembers, arrears_members: arrearsMembers, total_collected: totalCollected, recent_activity: recentActivity, region_stats: regionStats });
+    const auditLogsSnapshot = await db.collection('auditLogs').orderBy('createdAt', 'desc').limit(10).get();
+    const recentActivity = [];
+    for (const doc of auditLogsSnapshot.docs) {
+      const log = doc.data();
+      let actorName = 'Unknown';
+      if (log.actorId) {
+        const actorDoc = await db.collection('users').doc(log.actorId).get();
+        if (actorDoc.exists) {
+          actorName = actorDoc.data().fullName || 'Unknown';
+        }
+      }
+      recentActivity.push({ ...log, actorName });
+    }
+
+    const regionsSnapshot = await db.collection('regions').orderBy('name').get();
+    const regionStats = [];
+    for (const regionDoc of regionsSnapshot.docs) {
+      const region = regionDoc.data();
+      const regionMembersSnapshot = await db.collection('users').where('regionId', '==', region.id).where('role', '==', 'member').where('isActive', '==', true).get();
+      let collected = 0;
+      for (const memberDoc of regionMembersSnapshot.docs) {
+        const memberDuesSnapshot = await db.collection('monthlyDues').where('userId', '==', memberDoc.id).where('status', '==', 'paid').get();
+        memberDuesSnapshot.forEach(dueDoc => {
+          collected += dueDoc.data().amount;
+        });
+      }
+      regionStats.push({
+        name: region.name,
+        code: region.code,
+        member_count: regionMembersSnapshot.size,
+        collected
+      });
+    }
+
+    res.json({ 
+      total_members: totalMembers, 
+      paid_members: paidMembersSet.size, 
+      arrears_members: arrearsMembersSet.size, 
+      total_collected: totalCollected, 
+      recent_activity: recentActivity, 
+      region_stats: regionStats 
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to fetch stats' });
@@ -54,27 +80,51 @@ router.get('/stats', authenticate, requireSuperAdmin, (req, res) => {
 });
 
 // List members
-router.get('/members', authenticate, requireSuperAdmin, (req, res) => {
+router.get('/members', authenticate, requireSuperAdmin, async (req, res) => {
   try {
-    const db = getDb();
     const { search, region_id, page = 1, limit = 15 } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
-    const conditions = ["u.role='member'", "u.is_active=1"];
-    const params = [];
+    let query = db.collection('users').where('role', '==', 'member').where('isActive', '==', true);
+    if (region_id) {
+      query = query.where('regionId', '==', region_id);
+    }
 
-    if (region_id) { conditions.push("u.region_id=?"); params.push(region_id); }
-    if (search)    { conditions.push("(u.full_name LIKE ? OR u.user_id_code LIKE ? OR u.email LIKE ?)"); params.push(`%${search}%`, `%${search}%`, `%${search}%`); }
-
-    const where = 'WHERE ' + conditions.join(' AND ');
-    const query = `SELECT u.id, u.user_id_code, u.full_name, u.email, u.position, u.dept_code, u.created_at,
-                          r.name as region_name, r.id as region_id
-                   FROM users u LEFT JOIN regions r ON u.region_id=r.id
-                   ${where} ORDER BY u.full_name ASC LIMIT ? OFFSET ?`;
-    const rows   = db.exec(query, [...params, parseInt(limit), offset]);
-    const countR = db.exec(`SELECT COUNT(*) FROM users u LEFT JOIN regions r ON u.region_id=r.id ${where}`, params);
-
-    res.json({ members: rows2obj(rows), total: countR[0]?.values[0][0] || 0, page: parseInt(page), limit: parseInt(limit) });
+    const snapshot = await query.get();
+    let members = [];
+    for (const doc of snapshot.docs) {
+      const member = doc.data();
+      if (search) {
+        const searchLower = search.toLowerCase();
+        if (!(member.fullName.toLowerCase().includes(searchLower) || 
+              member.userIdCode.toLowerCase().includes(searchLower) || 
+              member.email.toLowerCase().includes(searchLower))) {
+          continue;
+        }
+      }
+      let regionName = null, regionId = member.regionId;
+      if (regionId) {
+        const regionDoc = await db.collection('regions').doc(regionId).get();
+        if (regionDoc.exists) {
+          regionName = regionDoc.data().name;
+        }
+      }
+      members.push({
+        id: member.id,
+        userIdCode: member.userIdCode,
+        fullName: member.fullName,
+        email: member.email,
+        position: member.position,
+        deptCode: member.deptCode,
+        createdAt: member.createdAt,
+        regionName,
+        regionId
+      });
+    }
+    members.sort((a, b) => a.fullName.localeCompare(b.fullName));
+    const total = members.length;
+    const paginatedMembers = members.slice(offset, offset + parseInt(limit));
+    res.json({ members: paginatedMembers, total, page: parseInt(page), limit: parseInt(limit) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to fetch members' });
@@ -82,25 +132,41 @@ router.get('/members', authenticate, requireSuperAdmin, (req, res) => {
 });
 
 // Single member with full ledger
-router.get('/members/:id', authenticate, requireSuperAdmin, (req, res) => {
+router.get('/members/:id', authenticate, requireSuperAdmin, async (req, res) => {
   try {
-    const db = getDb();
-    const rows = db.exec(`SELECT u.*, r.name as region_name, r.code as region_code
-      FROM users u LEFT JOIN regions r ON u.region_id=r.id WHERE u.id=? AND u.is_active=1`, [req.params.id]);
-    if (!rows[0]?.values?.length) return res.status(404).json({ error: 'Member not found' });
+    const memberDoc = await db.collection('users').doc(req.params.id).get();
+    if (!memberDoc.exists || memberDoc.data().role !== 'member' || !memberDoc.data().isActive) {
+      return res.status(404).json({ error: 'Member not found' });
+    }
 
-    const cols = rows[0].columns;
-    const member = {};
-    cols.forEach((c, i) => member[c] = rows[0].values[0][i]);
-    delete member.password_hash;
+    const member = memberDoc.data();
+    delete member.passwordHash;
+    let regionName = null, regionCode = null;
+    if (member.regionId) {
+      const regionDoc = await db.collection('regions').doc(member.regionId).get();
+      if (regionDoc.exists) {
+        regionName = regionDoc.data().name;
+        regionCode = regionDoc.data().code;
+      }
+    }
+
+    const duesSnapshot = await db.collection('monthlyDues').where('userId', '==', req.params.id).orderBy('dueYear', 'desc').orderBy('dueMonth', 'desc').get();
+    const dues = duesSnapshot.docs.map(doc => doc.data());
+
+    const programPledgesSnapshot = await db.collection('programPledges').where('userId', '==', req.params.id).orderBy('createdAt', 'desc').get();
+    const programPledges = programPledgesSnapshot.docs.map(doc => doc.data());
+
+    const otherPledgesSnapshot = await db.collection('otherPledges').where('userId', '==', req.params.id).orderBy('createdAt', 'desc').get();
+    const otherPledges = otherPledgesSnapshot.docs.map(doc => doc.data());
 
     res.json({
-      member,
-      dues:             rows2obj(db.exec(`SELECT * FROM monthly_dues   WHERE user_id=? ORDER BY due_year DESC, due_month DESC`, [req.params.id])),
-      program_pledges:  rows2obj(db.exec(`SELECT * FROM program_pledges WHERE user_id=? ORDER BY created_at DESC`,               [req.params.id])),
-      other_pledges:    rows2obj(db.exec(`SELECT * FROM other_pledges   WHERE user_id=? ORDER BY created_at DESC`,               [req.params.id])),
+      member: { ...member, regionName, regionCode },
+      dues,
+      program_pledges: programPledges,
+      other_pledges: otherPledges
     });
   } catch (err) {
+    console.error(err);
     res.status(500).json({ error: 'Failed to fetch member' });
   }
 });
@@ -111,26 +177,35 @@ router.post('/members', authenticate, requireSuperAdmin, async (req, res) => {
     const { full_name, email, position, region_id, dept_code } = req.body;
     if (!full_name || !email || !region_id) return res.status(400).json({ error: 'Name, email, and region are required' });
 
-    const db = getDb();
-    if (db.exec('SELECT id FROM users WHERE email=?', [email.toLowerCase()])[0]?.values?.length)
-      return res.status(409).json({ error: 'Email already exists' });
+    const existingEmailSnapshot = await db.collection('users').where('email', '==', email.toLowerCase()).get();
+    if (!existingEmailSnapshot.empty) return res.status(409).json({ error: 'Email already exists' });
 
-    const regionRows = db.exec('SELECT code FROM regions WHERE id=?', [region_id]);
-    if (!regionRows[0]?.values?.length) return res.status(400).json({ error: 'Invalid region' });
+    const regionDoc = await db.collection('regions').doc(region_id).get();
+    if (!regionDoc.exists) return res.status(400).json({ error: 'Invalid region' });
+    const regionCode = regionDoc.data().code;
 
-    const regionCode  = regionRows[0].values[0][0];
-    const dCode       = (dept_code || 'MED').toUpperCase();
-    const userId      = uuidv4();
-    const userIdCode  = generateUserId(regionCode, dCode);
-    const tempPass    = 'Member@2025';
-    const hash        = await bcrypt.hash(tempPass, 10);
+    const dCode = (dept_code || 'MED').toUpperCase();
+    const userId = uuidv4();
+    const userIdCode = await generateUserId(regionCode, dCode);
+    const tempPass = 'Member@2025';
+    const hash = await bcrypt.hash(tempPass, 10);
 
-    db.run(`INSERT INTO users (id, user_id_code, full_name, email, password_hash, position, region_id, dept_code, role)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'member')`,
-      [userId, userIdCode, full_name.trim(), email.toLowerCase().trim(), hash, position || '', region_id, dCode]);
-    saveDatabase();
-    auditLog(req.user.id, 'CREATE_MEMBER', 'users', userId, null, { full_name, email, userIdCode });
+    await db.collection('users').doc(userId).set({
+      id: userId,
+      userIdCode,
+      fullName: full_name.trim(),
+      email: email.toLowerCase().trim(),
+      passwordHash: hash,
+      position: position || '',
+      regionId: region_id,
+      deptCode: dCode,
+      role: 'member',
+      isActive: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
 
+    await auditLog(req.user.id, 'CREATE_MEMBER', 'users', userId, null, { full_name, email, userIdCode });
     res.status(201).json({ message: 'Member created', id: userId, user_id_code: userIdCode, temp_password: tempPass });
   } catch (err) {
     console.error(err);
@@ -139,50 +214,60 @@ router.post('/members', authenticate, requireSuperAdmin, async (req, res) => {
 });
 
 // Update member
-router.put('/members/:id', authenticate, requireSuperAdmin, (req, res) => {
+router.put('/members/:id', authenticate, requireSuperAdmin, async (req, res) => {
   try {
-    const db = getDb();
-    const rows = db.exec('SELECT * FROM users WHERE id=?', [req.params.id]);
-    if (!rows[0]?.values?.length) return res.status(404).json({ error: 'Member not found' });
+    const memberDocRef = db.collection('users').doc(req.params.id);
+    const memberDoc = await memberDocRef.get();
+    if (!memberDoc.exists) return res.status(404).json({ error: 'Member not found' });
 
-    const cols = rows[0].columns;
-    const before = {};
-    cols.forEach((c, i) => before[c] = rows[0].values[0][i]);
-    delete before.password_hash;
+    const before = memberDoc.data();
+    delete before.passwordHash;
 
     const { full_name, email, position, region_id, dept_code, is_active } = req.body;
-    db.run(`UPDATE users SET full_name=?, email=?, position=?, region_id=?, dept_code=?, is_active=?, updated_at=datetime('now') WHERE id=?`,
-      [full_name || before.full_name, email || before.email, position ?? before.position,
-       region_id || before.region_id, dept_code || before.dept_code,
-       is_active !== undefined ? (is_active ? 1 : 0) : before.is_active, req.params.id]);
-    saveDatabase();
-    auditLog(req.user.id, 'UPDATE_MEMBER', 'users', req.params.id, before, req.body);
+    const updateData = {
+      fullName: full_name || before.fullName,
+      email: email || before.email,
+      position: position ?? before.position,
+      regionId: region_id || before.regionId,
+      deptCode: dept_code || before.deptCode,
+      isActive: is_active !== undefined ? is_active : before.isActive,
+      updatedAt: new Date().toISOString()
+    };
+
+    await memberDocRef.update(updateData);
+    await auditLog(req.user.id, 'UPDATE_MEMBER', 'users', req.params.id, before, req.body);
     res.json({ message: 'Member updated' });
-  } catch {
+  } catch (err) {
+    console.error(err);
     res.status(500).json({ error: 'Failed to update member' });
   }
 });
 
 // Soft-delete member
-router.delete('/members/:id', authenticate, requireSuperAdmin, (req, res) => {
+router.delete('/members/:id', authenticate, requireSuperAdmin, async (req, res) => {
   try {
-    const db = getDb();
-    const rows = db.exec('SELECT full_name FROM users WHERE id=?', [req.params.id]);
-    if (!rows[0]?.values?.length) return res.status(404).json({ error: 'Member not found' });
-    db.run("UPDATE users SET is_active=0, updated_at=datetime('now') WHERE id=?", [req.params.id]);
-    saveDatabase();
-    auditLog(req.user.id, 'DELETE_MEMBER', 'users', req.params.id, { full_name: rows[0].values[0][0] }, null);
+    const memberDocRef = db.collection('users').doc(req.params.id);
+    const memberDoc = await memberDocRef.get();
+    if (!memberDoc.exists) return res.status(404).json({ error: 'Member not found' });
+
+    const fullName = memberDoc.data().fullName;
+    await memberDocRef.update({ isActive: false, updatedAt: new Date().toISOString() });
+    await auditLog(req.user.id, 'DELETE_MEMBER', 'users', req.params.id, { fullName }, null);
     res.json({ message: 'Member archived' });
-  } catch {
+  } catch (err) {
+    console.error(err);
     res.status(500).json({ error: 'Failed to archive member' });
   }
 });
 
 // Get regions
-router.get('/regions', authenticate, requireSuperAdmin, (req, res) => {
+router.get('/regions', authenticate, requireSuperAdmin, async (req, res) => {
   try {
-    res.json(rows2obj(getDb().exec('SELECT * FROM regions ORDER BY name')));
-  } catch {
+    const regionsSnapshot = await db.collection('regions').orderBy('name').get();
+    const regions = regionsSnapshot.docs.map(doc => doc.data());
+    res.json(regions);
+  } catch (err) {
+    console.error(err);
     res.status(500).json({ error: 'Failed to fetch regions' });
   }
 });
@@ -207,19 +292,29 @@ router.post('/batch-upload', authenticate, requireSuperAdmin, upload.single('fil
     }
     fs.unlinkSync(req.file.path);
 
-    const db = getDb();
     const errors = [], successes = [];
 
     for (let i = 0; i < records.length; i++) {
       const row = records[i];
       const rowNum = i + 2;
 
-      const userRows = db.exec('SELECT id FROM users WHERE user_id_code=? OR email=?',
-        [row.user_id || '', row.email || '']);
-      if (!userRows[0]?.values?.length) {
-        errors.push({ row: rowNum, error: `User not found: ${row.user_id || row.email}` }); continue;
+      let userId = null;
+      if (row.user_id) {
+        const snapshot = await db.collection('users').where('userIdCode', '==', row.user_id).get();
+        if (!snapshot.empty) {
+          userId = snapshot.docs[0].id;
+        }
       }
-      const userId = userRows[0].values[0][0];
+      if (!userId && row.email) {
+        const snapshot = await db.collection('users').where('email', '==', row.email).get();
+        if (!snapshot.empty) {
+          userId = snapshot.docs[0].id;
+        }
+      }
+      if (!userId) {
+        errors.push({ row: rowNum, error: `User not found: ${row.user_id || row.email}` }); 
+        continue;
+      }
 
       if (row.due_month && row.due_year) {
         const month = parseInt(row.due_month), year = parseInt(row.due_year);
@@ -227,26 +322,50 @@ router.post('/batch-upload', authenticate, requireSuperAdmin, upload.single('fil
         if (month < 1 || month > 12 || year < 2000) {
           errors.push({ row: rowNum, error: `Invalid month/year: ${month}/${year}` });
         } else {
-          db.run(`INSERT INTO monthly_dues (id, user_id, due_month, due_year, amount, status, updated_by)
-            VALUES (?,?,?,?,?,?,?)
-            ON CONFLICT(user_id, due_month, due_year) DO UPDATE SET amount=excluded.amount, status=excluded.status, updated_by=excluded.updated_by, updated_at=datetime('now')`,
-            [uuidv4(), userId, month, year, parseFloat(row.due_amount)||0, status, req.user.id]);
+          const existingDueSnapshot = await db.collection('monthlyDues').where('userId', '==', userId).where('dueMonth', '==', month).where('dueYear', '==', year).get();
+          if (!existingDueSnapshot.empty) {
+            await existingDueSnapshot.docs[0].ref.update({
+              amount: parseFloat(row.due_amount) || 0,
+              status,
+              updatedBy: req.user.id,
+              updatedAt: new Date().toISOString()
+            });
+          } else {
+            const dueId = uuidv4();
+            await db.collection('monthlyDues').doc(dueId).set({
+              id: dueId,
+              userId,
+              dueMonth: month,
+              dueYear: year,
+              amount: parseFloat(row.due_amount) || 0,
+              status,
+              updatedBy: req.user.id,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString()
+            });
+          }
           successes.push(rowNum);
         }
       }
 
       if (row.pledge_program) {
-        db.run(`INSERT INTO program_pledges (id, user_id, program_name, pledge_amount, status, pledge_date, updated_by)
-          VALUES (?,?,?,?,?,?,?)`,
-          [uuidv4(), userId, row.pledge_program, parseFloat(row.pledge_amount)||0,
-           ['paid','pending','arrears'].includes(row.pledge_status) ? row.pledge_status : 'pending',
-           row.pledge_date || null, req.user.id]);
+        const pledgeId = uuidv4();
+        await db.collection('programPledges').doc(pledgeId).set({
+          id: pledgeId,
+          userId,
+          programName: row.pledge_program,
+          pledgeAmount: parseFloat(row.pledge_amount) || 0,
+          status: ['paid','pending','arrears'].includes(row.pledge_status) ? row.pledge_status : 'pending',
+          pledgeDate: row.pledge_date || null,
+          updatedBy: req.user.id,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        });
         successes.push(`${rowNum}(pledge)`);
       }
     }
 
-    saveDatabase();
-    auditLog(req.user.id, 'BATCH_UPLOAD', 'multiple', null, null, { successes: successes.length, errors: errors.length });
+    await auditLog(req.user.id, 'BATCH_UPLOAD', 'multiple', null, null, { successes: successes.length, errors: errors.length });
     res.json({ processed: records.length, successes: successes.length, errors });
   } catch (err) {
     console.error(err);
@@ -255,18 +374,35 @@ router.post('/batch-upload', authenticate, requireSuperAdmin, upload.single('fil
 });
 
 // Export members to Excel
-router.get('/export', authenticate, requireSuperAdmin, (req, res) => {
+router.get('/export', authenticate, requireSuperAdmin, async (req, res) => {
   try {
-    const db = getDb();
     const { region_id } = req.query;
-    const conditions = ["u.role='member'", "u.is_active=1"];
-    const params = [];
-    if (region_id) { conditions.push("u.region_id=?"); params.push(region_id); }
+    let query = db.collection('users').where('role', '==', 'member').where('isActive', '==', true);
+    if (region_id) {
+      query = query.where('regionId', '==', region_id);
+    }
 
-    const members = rows2obj(db.exec(`
-      SELECT u.user_id_code, u.full_name, u.email, u.position, r.name as region, u.created_at
-      FROM users u LEFT JOIN regions r ON u.region_id=r.id
-      WHERE ${conditions.join(' AND ')} ORDER BY r.name, u.full_name`, params));
+    const snapshot = await query.get();
+    const members = [];
+    for (const doc of snapshot.docs) {
+      const member = doc.data();
+      let region = '';
+      if (member.regionId) {
+        const regionDoc = await db.collection('regions').doc(member.regionId).get();
+        if (regionDoc.exists) {
+          region = regionDoc.data().name;
+        }
+      }
+      members.push({
+        user_id_code: member.userIdCode,
+        full_name: member.fullName,
+        email: member.email,
+        position: member.position,
+        region,
+        created_at: member.createdAt
+      });
+    }
+    members.sort((a, b) => a.region.localeCompare(b.region) || a.full_name.localeCompare(b.full_name));
 
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(members), 'Members');
@@ -274,18 +410,31 @@ router.get('/export', authenticate, requireSuperAdmin, (req, res) => {
     res.setHeader('Content-Disposition', 'attachment; filename="members-export.xlsx"');
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.send(buf);
-  } catch {
+  } catch (err) {
+    console.error(err);
     res.status(500).json({ error: 'Export failed' });
   }
 });
 
 // Audit logs
-router.get('/audit-logs', authenticate, requireSuperAdmin, (req, res) => {
+router.get('/audit-logs', authenticate, requireSuperAdmin, async (req, res) => {
   try {
-    res.json(rows2obj(getDb().exec(`
-      SELECT al.*, u.full_name as actor_name FROM audit_logs al
-      LEFT JOIN users u ON al.actor_id=u.id ORDER BY al.created_at DESC LIMIT 100`)));
-  } catch {
+    const snapshot = await db.collection('auditLogs').orderBy('createdAt', 'desc').limit(100).get();
+    const logs = [];
+    for (const doc of snapshot.docs) {
+      const log = doc.data();
+      let actorName = 'Unknown';
+      if (log.actorId) {
+        const actorDoc = await db.collection('users').doc(log.actorId).get();
+        if (actorDoc.exists) {
+          actorName = actorDoc.data().fullName || 'Unknown';
+        }
+      }
+      logs.push({ ...log, actorName });
+    }
+    res.json(logs);
+  } catch (err) {
+    console.error(err);
     res.status(500).json({ error: 'Failed to fetch audit logs' });
   }
 });

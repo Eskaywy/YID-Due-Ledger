@@ -1,73 +1,84 @@
 const express = require('express');
-const { getDb } = require('../db');
+const { db } = require('../db');
 const { authenticate } = require('../middleware/auth');
 
 const router = express.Router();
 
-function rows2obj(rows) {
-  if (!rows[0]?.values?.length) return [];
-  const cols = rows[0].columns;
-  return rows[0].values.map(vals => {
-    const obj = {};
-    cols.forEach((c, i) => obj[c] = vals[i]);
-    return obj;
-  });
-}
-
-router.get('/my/dues', authenticate, (req, res) => {
+router.get('/my/dues', authenticate, async (req, res) => {
   try {
-    const db = getDb();
-    res.json(rows2obj(db.exec(
-      `SELECT * FROM monthly_dues WHERE user_id=? ORDER BY due_year DESC, due_month DESC`, [req.user.id]
-    )));
-  } catch { res.status(500).json({ error: 'Failed to fetch dues' }); }
+    const duesSnapshot = await db.collection('monthlyDues').where('userId', '==', req.user.id).orderBy('dueYear', 'desc').orderBy('dueMonth', 'desc').get();
+    const dues = duesSnapshot.docs.map(doc => doc.data());
+    res.json(dues);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch dues' });
+  }
 });
 
-router.get('/my/pledges/program', authenticate, (req, res) => {
+router.get('/my/pledges/program', authenticate, async (req, res) => {
   try {
-    const db = getDb();
-    res.json(rows2obj(db.exec(
-      `SELECT * FROM program_pledges WHERE user_id=? ORDER BY created_at DESC`, [req.user.id]
-    )));
-  } catch { res.status(500).json({ error: 'Failed to fetch program pledges' }); }
+    const pledgesSnapshot = await db.collection('programPledges').where('userId', '==', req.user.id).orderBy('createdAt', 'desc').get();
+    const pledges = pledgesSnapshot.docs.map(doc => doc.data());
+    res.json(pledges);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch program pledges' });
+  }
 });
 
-router.get('/my/pledges/other', authenticate, (req, res) => {
+router.get('/my/pledges/other', authenticate, async (req, res) => {
   try {
-    const db = getDb();
-    res.json(rows2obj(db.exec(
-      `SELECT * FROM other_pledges WHERE user_id=? ORDER BY created_at DESC`, [req.user.id]
-    )));
-  } catch { res.status(500).json({ error: 'Failed to fetch other pledges' }); }
+    const pledgesSnapshot = await db.collection('otherPledges').where('userId', '==', req.user.id).orderBy('createdAt', 'desc').get();
+    const pledges = pledgesSnapshot.docs.map(doc => doc.data());
+    res.json(pledges);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch other pledges' });
+  }
 });
 
-router.get('/my/summary', authenticate, (req, res) => {
+router.get('/my/summary', authenticate, async (req, res) => {
   try {
-    const db = getDb();
     const uid = req.user.id;
-    const d = db.exec(`SELECT
-      SUM(CASE WHEN status='paid' THEN amount ELSE 0 END),
-      SUM(CASE WHEN status='pending' THEN amount ELSE 0 END),
-      SUM(CASE WHEN status='arrears' THEN amount ELSE 0 END),
-      COUNT(*) FROM monthly_dues WHERE user_id=?`, [uid])[0]?.values[0] || [0,0,0,0];
-    const p = db.exec(`SELECT
-      SUM(CASE WHEN status='paid' THEN pledge_amount ELSE 0 END),
-      SUM(CASE WHEN status='pending' THEN pledge_amount ELSE 0 END),
-      SUM(CASE WHEN status='arrears' THEN pledge_amount ELSE 0 END)
-      FROM program_pledges WHERE user_id=?`, [uid])[0]?.values[0] || [0,0,0];
-    const o = db.exec(`SELECT
-      SUM(CASE WHEN status='paid' THEN pledge_amount ELSE 0 END),
-      SUM(CASE WHEN status='pending' THEN pledge_amount ELSE 0 END),
-      SUM(CASE WHEN status='arrears' THEN pledge_amount ELSE 0 END)
-      FROM other_pledges WHERE user_id=?`, [uid])[0]?.values[0] || [0,0,0];
+    const duesSnapshot = await db.collection('monthlyDues').where('userId', '==', uid).get();
+    const programPledgesSnapshot = await db.collection('programPledges').where('userId', '==', uid).get();
+    const otherPledgesSnapshot = await db.collection('otherPledges').where('userId', '==', uid).get();
+
+    let duesPaid = 0, duesPending = 0, duesArrears = 0, duesTotal = 0;
+    duesSnapshot.forEach(doc => {
+      const due = doc.data();
+      duesTotal++;
+      if (due.status === 'paid') duesPaid += due.amount;
+      else if (due.status === 'pending') duesPending += due.amount;
+      else if (due.status === 'arrears') duesArrears += due.amount;
+    });
+
+    let progPaid = 0, progPending = 0, progArrears = 0;
+    programPledgesSnapshot.forEach(doc => {
+      const pledge = doc.data();
+      if (pledge.status === 'paid') progPaid += pledge.pledgeAmount;
+      else if (pledge.status === 'pending') progPending += pledge.pledgeAmount;
+      else if (pledge.status === 'arrears') progArrears += pledge.pledgeAmount;
+    });
+
+    let otherPaid = 0, otherPending = 0, otherArrears = 0;
+    otherPledgesSnapshot.forEach(doc => {
+      const pledge = doc.data();
+      if (pledge.status === 'paid') otherPaid += pledge.pledgeAmount;
+      else if (pledge.status === 'pending') otherPending += pledge.pledgeAmount;
+      else if (pledge.status === 'arrears') otherArrears += pledge.pledgeAmount;
+    });
 
     res.json({
-      dues:             { paid: d[0]||0, pending: d[1]||0, arrears: d[2]||0, total: d[3]||0 },
-      program_pledges:  { paid: p[0]||0, pending: p[1]||0, arrears: p[2]||0 },
-      other_pledges:    { paid: o[0]||0, pending: o[1]||0, arrears: o[2]||0 },
-      total_outstanding: ((d[1]||0)+(d[2]||0)+(p[1]||0)+(p[2]||0)+(o[1]||0)+(o[2]||0))
+      dues: { paid: duesPaid, pending: duesPending, arrears: duesArrears, total: duesTotal },
+      program_pledges: { paid: progPaid, pending: progPending, arrears: progArrears },
+      other_pledges: { paid: otherPaid, pending: otherPending, arrears: otherArrears },
+      total_outstanding: (duesPending + duesArrears + progPending + progArrears + otherPending + otherArrears)
     });
-  } catch { res.status(500).json({ error: 'Failed to fetch summary' }); }
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch summary' });
+  }
 });
 
 module.exports = router;

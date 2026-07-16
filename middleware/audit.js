@@ -1,19 +1,22 @@
-const { getDb, saveDatabase } = require('../db');
+const { db } = require('../db');
 const { v4: uuidv4 } = require('uuid');
 
-function auditLog(actorId, action, targetTable, targetId, beforeValue, afterValue) {
+const auditLog = async (actorId, action, targetTable, targetId, beforeValue, afterValue) => {
   try {
-    const db = getDb();
-    db.run(`INSERT INTO audit_logs (id, actor_id, action, target_table, target_id, before_value, after_value)
-      VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [uuidv4(), actorId, action, targetTable, targetId,
-        beforeValue ? JSON.stringify(beforeValue) : null,
-        afterValue  ? JSON.stringify(afterValue)  : null]
-    );
-    saveDatabase();
+    const auditId = uuidv4();
+    await db.collection('auditLogs').doc(auditId).set({
+      id: auditId,
+      actorId,
+      action,
+      targetTable,
+      targetId,
+      beforeValue: beforeValue ? JSON.stringify(beforeValue) : null,
+      afterValue: afterValue ? JSON.stringify(afterValue) : null,
+      createdAt: new Date().toISOString(),
+    });
   } catch (err) {
     console.error('Audit log error:', err);
   }
-}
+};
 
 module.exports = { auditLog };

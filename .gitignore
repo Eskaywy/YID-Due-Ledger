@@ -36,3 +36,6 @@ Thumbs.db
 # Database
 data/*.db
 data/*.sqlite
+
+# Firebase service account key (keep secure!)
+serviceAccountKey.json
