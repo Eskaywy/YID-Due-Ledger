@@ -1,26 +1,28 @@
 const jwt = require('jsonwebtoken');
-const { getDb } = require('../db');
+const { db } = require('../db');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'yid-due-ledger-secret-key-change-in-production';
 
-function authenticate(req, res, next) {
+// Verify the JWT, then load the user from Firestore.
+// req.user is set to the raw Firestore doc data (camelCase fields, includes id/role/isActive).
+const authenticate = async (req, res, next) => {
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith('Bearer ')) return res.status(401).json({ error: 'Authentication required' });
 
   const token = authHeader.split(' ')[1];
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
-    const db = getDb();
-    const rows = db.exec('SELECT * FROM users WHERE id=? AND is_active=1', [decoded.userId]);
-    if (!rows[0]?.values?.length) return res.status(401).json({ error: 'User not found or inactive' });
-    const cols = rows[0].columns;
-    req.user = {};
-    cols.forEach((c, i) => req.user[c] = rows[0].values[0][i]);
+    const userDoc = await db.collection('users').doc(decoded.userId).get();
+    if (!userDoc.exists || !userDoc.data().isActive) {
+      return res.status(401).json({ error: 'User not found or inactive' });
+    }
+    req.user = userDoc.data();
     next();
-  } catch {
+  } catch (err) {
+    if (err?.name === 'TokenExpiredError') return res.status(401).json({ error: 'Session expired. Please sign in again.' });
     return res.status(401).json({ error: 'Invalid or expired token' });
   }
-}
+};
 
 // Only super_admin can access admin routes
 function requireSuperAdmin(req, res, next) {

@@ -13,6 +13,58 @@ const { auditLog } = require('../middleware/audit');
 const router = express.Router();
 const upload = multer({ dest: 'uploads/', limits: { fileSize: 5 * 1024 * 1024 } });
 
+// Map Firestore camelCase docs to the snake_case API shape the frontend expects
+const mapDue = (d = {}) => ({
+  id: d.id,
+  user_id: d.userId ?? null,
+  due_month: d.dueMonth ?? null,
+  due_year: d.dueYear ?? null,
+  amount: d.amount ?? 0,
+  status: d.status ?? 'pending',
+  notes: d.notes ?? null,
+  updated_by: d.updatedBy ?? null,
+  created_at: d.createdAt ?? null,
+  updated_at: d.updatedAt ?? null,
+});
+
+const mapProgramPledge = (p = {}) => ({
+  id: p.id,
+  user_id: p.userId ?? null,
+  program_name: p.programName ?? null,
+  pledge_amount: p.pledgeAmount ?? 0,
+  status: p.status ?? 'pending',
+  pledge_date: p.pledgeDate ?? null,
+  notes: p.notes ?? null,
+  created_at: p.createdAt ?? null,
+  updated_at: p.updatedAt ?? null,
+});
+
+const mapOtherPledge = (o = {}) => ({
+  id: o.id,
+  user_id: o.userId ?? null,
+  description: o.description ?? null,
+  pledge_amount: o.pledgeAmount ?? 0,
+  status: o.status ?? 'pending',
+  pledge_date: o.pledgeDate ?? null,
+  notes: o.notes ?? null,
+  created_at: o.createdAt ?? null,
+  updated_at: o.updatedAt ?? null,
+});
+
+const mapMember = (m = {}) => ({
+  id: m.id,
+  user_id_code: m.userIdCode ?? null,
+  full_name: m.fullName ?? null,
+  email: m.email ?? null,
+  position: m.position ?? null,
+  dept_code: m.deptCode ?? null,
+  region_id: m.regionId ?? null,
+  role: m.role ?? 'member',
+  is_active: m.isActive ?? true,
+  created_at: m.createdAt ?? null,
+  updated_at: m.updatedAt ?? null,
+});
+
 // Dashboard stats
 router.get('/stats', authenticate, requireSuperAdmin, async (req, res) => {
   try {
@@ -42,7 +94,7 @@ router.get('/stats', authenticate, requireSuperAdmin, async (req, res) => {
           actorName = actorDoc.data().fullName || 'Unknown';
         }
       }
-      recentActivity.push({ ...log, actorName });
+      recentActivity.push({ id: log.id, action: log.action, target_table: log.targetTable ?? null, target_id: log.targetId ?? null, actor_name: actorName, created_at: log.createdAt ?? null });
     }
 
     const regionsSnapshot = await db.collection('regions').orderBy('name').get();
@@ -96,9 +148,9 @@ router.get('/members', authenticate, requireSuperAdmin, async (req, res) => {
       const member = doc.data();
       if (search) {
         const searchLower = search.toLowerCase();
-        if (!(member.fullName.toLowerCase().includes(searchLower) || 
-              member.userIdCode.toLowerCase().includes(searchLower) || 
-              member.email.toLowerCase().includes(searchLower))) {
+        if (!((member.fullName || '').toLowerCase().includes(searchLower) ||
+              (member.userIdCode || '').toLowerCase().includes(searchLower) ||
+              (member.email || '').toLowerCase().includes(searchLower))) {
           continue;
         }
       }
@@ -109,19 +161,9 @@ router.get('/members', authenticate, requireSuperAdmin, async (req, res) => {
           regionName = regionDoc.data().name;
         }
       }
-      members.push({
-        id: member.id,
-        userIdCode: member.userIdCode,
-        fullName: member.fullName,
-        email: member.email,
-        position: member.position,
-        deptCode: member.deptCode,
-        createdAt: member.createdAt,
-        regionName,
-        regionId
-      });
+      members.push({ ...mapMember(member), region_name: regionName, region_id: regionId });
     }
-    members.sort((a, b) => a.fullName.localeCompare(b.fullName));
+    members.sort((a, b) => (a.full_name || '').localeCompare(b.full_name || ''));
     const total = members.length;
     const paginatedMembers = members.slice(offset, offset + parseInt(limit));
     res.json({ members: paginatedMembers, total, page: parseInt(page), limit: parseInt(limit) });
@@ -140,7 +182,6 @@ router.get('/members/:id', authenticate, requireSuperAdmin, async (req, res) => 
     }
 
     const member = memberDoc.data();
-    delete member.passwordHash;
     let regionName = null, regionCode = null;
     if (member.regionId) {
       const regionDoc = await db.collection('regions').doc(member.regionId).get();
@@ -151,16 +192,16 @@ router.get('/members/:id', authenticate, requireSuperAdmin, async (req, res) => 
     }
 
     const duesSnapshot = await db.collection('monthlyDues').where('userId', '==', req.params.id).orderBy('dueYear', 'desc').orderBy('dueMonth', 'desc').get();
-    const dues = duesSnapshot.docs.map(doc => doc.data());
+    const dues = duesSnapshot.docs.map(doc => mapDue(doc.data()));
 
     const programPledgesSnapshot = await db.collection('programPledges').where('userId', '==', req.params.id).orderBy('createdAt', 'desc').get();
-    const programPledges = programPledgesSnapshot.docs.map(doc => doc.data());
+    const programPledges = programPledgesSnapshot.docs.map(doc => mapProgramPledge(doc.data()));
 
     const otherPledgesSnapshot = await db.collection('otherPledges').where('userId', '==', req.params.id).orderBy('createdAt', 'desc').get();
-    const otherPledges = otherPledgesSnapshot.docs.map(doc => doc.data());
+    const otherPledges = otherPledgesSnapshot.docs.map(doc => mapOtherPledge(doc.data()));
 
     res.json({
-      member: { ...member, regionName, regionCode },
+      member: { ...mapMember(member), region_name: regionName, region_code: regionCode },
       dues,
       program_pledges: programPledges,
       other_pledges: otherPledges
@@ -430,7 +471,7 @@ router.get('/audit-logs', authenticate, requireSuperAdmin, async (req, res) => {
           actorName = actorDoc.data().fullName || 'Unknown';
         }
       }
-      logs.push({ ...log, actorName });
+      logs.push({ id: log.id, action: log.action, target_table: log.targetTable ?? null, target_id: log.targetId ?? null, actor_name: actorName, before_value: log.beforeValue ?? null, after_value: log.afterValue ?? null, created_at: log.createdAt ?? null });
     }
     res.json(logs);
   } catch (err) {

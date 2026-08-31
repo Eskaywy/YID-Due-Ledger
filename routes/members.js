@@ -4,10 +4,48 @@ const { authenticate } = require('../middleware/auth');
 
 const router = express.Router();
 
+// Map Firestore camelCase docs to the snake_case API shape the frontend expects
+const mapDue = (d = {}) => ({
+  id: d.id,
+  user_id: d.userId ?? null,
+  due_month: d.dueMonth ?? null,
+  due_year: d.dueYear ?? null,
+  amount: d.amount ?? 0,
+  status: d.status ?? 'pending',
+  notes: d.notes ?? null,
+  updated_by: d.updatedBy ?? null,
+  created_at: d.createdAt ?? null,
+  updated_at: d.updatedAt ?? null,
+});
+
+const mapProgramPledge = (p = {}) => ({
+  id: p.id,
+  user_id: p.userId ?? null,
+  program_name: p.programName ?? null,
+  pledge_amount: p.pledgeAmount ?? 0,
+  status: p.status ?? 'pending',
+  pledge_date: p.pledgeDate ?? null,
+  notes: p.notes ?? null,
+  created_at: p.createdAt ?? null,
+  updated_at: p.updatedAt ?? null,
+});
+
+const mapOtherPledge = (o = {}) => ({
+  id: o.id,
+  user_id: o.userId ?? null,
+  description: o.description ?? null,
+  pledge_amount: o.pledgeAmount ?? 0,
+  status: o.status ?? 'pending',
+  pledge_date: o.pledgeDate ?? null,
+  notes: o.notes ?? null,
+  created_at: o.createdAt ?? null,
+  updated_at: o.updatedAt ?? null,
+});
+
 router.get('/my/dues', authenticate, async (req, res) => {
   try {
     const duesSnapshot = await db.collection('monthlyDues').where('userId', '==', req.user.id).orderBy('dueYear', 'desc').orderBy('dueMonth', 'desc').get();
-    const dues = duesSnapshot.docs.map(doc => doc.data());
+    const dues = duesSnapshot.docs.map(doc => mapDue(doc.data()));
     res.json(dues);
   } catch (err) {
     console.error(err);
@@ -18,7 +56,7 @@ router.get('/my/dues', authenticate, async (req, res) => {
 router.get('/my/pledges/program', authenticate, async (req, res) => {
   try {
     const pledgesSnapshot = await db.collection('programPledges').where('userId', '==', req.user.id).orderBy('createdAt', 'desc').get();
-    const pledges = pledgesSnapshot.docs.map(doc => doc.data());
+    const pledges = pledgesSnapshot.docs.map(doc => mapProgramPledge(doc.data()));
     res.json(pledges);
   } catch (err) {
     console.error(err);
@@ -29,7 +67,7 @@ router.get('/my/pledges/program', authenticate, async (req, res) => {
 router.get('/my/pledges/other', authenticate, async (req, res) => {
   try {
     const pledgesSnapshot = await db.collection('otherPledges').where('userId', '==', req.user.id).orderBy('createdAt', 'desc').get();
-    const pledges = pledgesSnapshot.docs.map(doc => doc.data());
+    const pledges = pledgesSnapshot.docs.map(doc => mapOtherPledge(doc.data()));
     res.json(pledges);
   } catch (err) {
     console.error(err);

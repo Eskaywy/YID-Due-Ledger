@@ -7,6 +7,33 @@ const { auditLog } = require('../middleware/audit');
 
 const router = express.Router();
 
+// Convert a Firestore user doc into the snake_case API shape the frontend expects
+// (never exposes passwordHash).
+const publicUser = (user, regionName = null, regionCode = null) => ({
+  id: user.id,
+  user_id_code: user.userIdCode ?? null,
+  full_name: user.fullName ?? null,
+  email: user.email ?? null,
+  position: user.position ?? null,
+  region_id: user.regionId ?? null,
+  region_name: regionName,
+  region_code: regionCode,
+  dept_code: user.deptCode ?? null,
+  role: user.role ?? 'member',
+  is_active: user.isActive ?? true,
+  created_at: user.createdAt ?? null,
+  updated_at: user.updatedAt ?? null,
+});
+
+// Load a region's name/code by its id.
+const getRegion = async (regionId) => {
+  if (!regionId) return { regionName: null, regionCode: null };
+  const regionDoc = await db.collection('regions').doc(regionId).get();
+  if (!regionDoc.exists) return { regionName: null, regionCode: null };
+  const region = regionDoc.data();
+  return { regionName: region.name ?? null, regionCode: region.code ?? null };
+};
+
 router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -21,21 +48,28 @@ router.post('/login', async (req, res) => {
     if (!valid) return res.status(401).json({ error: 'Invalid email or password' });
 
     // Get region data
-    let regionName = null, regionCode = null;
-    if (user.regionId) {
-      const regionDoc = await db.collection('regions').doc(user.regionId).get();
-      if (regionDoc.exists) {
-        regionName = regionDoc.data().name;
-        regionCode = regionDoc.data().code;
-      }
-    }
+    const { regionName, regionCode } = await getRegion(user.regionId);
 
     const token = generateToken(user.id);
-    const { passwordHash, ...safeUser } = user;
-    res.json({ token, user: { ...safeUser, regionName, regionCode } });
+    res.json({ token, user: publicUser(user, regionName, regionCode) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Login failed' });
+  }
+});
+
+// Public list of regions (used by the signup form, no auth required)
+router.get('/regions', async (req, res) => {
+  try {
+    const regionsSnapshot = await db.collection('regions').orderBy('name').get();
+    const regions = regionsSnapshot.docs.map(doc => {
+      const r = doc.data();
+      return { id: r.id ?? doc.id, name: r.name ?? null, code: r.code ?? null };
+    });
+    res.json(regions);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch regions' });
   }
 });
 
@@ -45,17 +79,8 @@ router.get('/me', authenticate, async (req, res) => {
     if (!userDoc.exists) return res.status(404).json({ error: 'User not found' });
     const user = userDoc.data();
 
-    let regionName = null, regionCode = null, regionId = user.regionId;
-    if (regionId) {
-      const regionDoc = await db.collection('regions').doc(regionId).get();
-      if (regionDoc.exists) {
-        regionName = regionDoc.data().name;
-        regionCode = regionDoc.data().code;
-      }
-    }
-
-    const { passwordHash, ...safeUser } = user;
-    res.json({ ...safeUser, regionName, regionCode, regionId });
+    const { regionName, regionCode } = await getRegion(user.regionId);
+    res.json(publicUser(user, regionName, regionCode));
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to fetch profile' });
@@ -64,7 +89,7 @@ router.get('/me', authenticate, async (req, res) => {
 
 router.post('/signup', async (req, res) => {
   try {
-    const { full_name, email, password, position, region_id } = req.body;
+    const { full_name, email, password, position, region_id, dept_code } = req.body;
     
     // Validate required fields
     if (!full_name || !email || !password) {
@@ -94,8 +119,11 @@ router.post('/signup', async (req, res) => {
       }
     }
     
-    // Generate user ID code
-    const user_id_code = await generateUserId('LGS', 'MED'); // Default LGS MED for now
+    const { regionCode: finalRegionCode } = await getRegion(finalRegionId);
+
+    // Generate user ID code from the selected region + department
+    const dCode = (dept_code || 'MED').toUpperCase();
+    const user_id_code = await generateUserId(finalRegionCode || 'LGS', dCode);
     
     await db.collection('users').doc(userId).set({
       id: userId,
@@ -105,7 +133,7 @@ router.post('/signup', async (req, res) => {
       passwordHash,
       position: position || null,
       regionId: finalRegionId,
-      deptCode: 'MED',
+      deptCode: dCode,
       role: 'member',
       isActive: true,
       createdAt: new Date().toISOString(),
@@ -127,8 +155,7 @@ router.post('/signup', async (req, res) => {
     }
     
     const token = generateToken(user.id);
-    const { passwordHash: _, ...safeUser } = user;
-    res.json({ token, user: { ...safeUser, regionName, regionCode } });
+    res.json({ token, user: publicUser(user, regionName, regionCode) });
     
   } catch (err) {
     console.error(err);
