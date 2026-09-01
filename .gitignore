@@ -43,3 +43,5 @@ serviceAccountKey.json
 # Local dev server logs
 frontend-dev.log
 frontend-dev-err.log
+server-dev.log
+server-dev-err.log

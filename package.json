@@ -7,8 +7,8 @@
     "start": "node server.js",
     "dev": "node server.js",
     "build": "cd frontend && npm install && npm run build",
-    "deploy:indexes": "firebase-tools deploy --only firestore:indexes",
-    "indexes:list": "firebase-tools firestore:indexes"
+    "deploy:indexes": "npx --yes firebase-tools deploy --only firestore:indexes",
+    "indexes:list": "npx --yes firebase-tools firestore:indexes"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
