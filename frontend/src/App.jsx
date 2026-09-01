@@ -4,6 +4,7 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import Layout          from './components/Layout';
 import LoginPage       from './pages/LoginPage';
 import SignupPage      from './pages/SignupPage';
+import ChangePasswordPage from './pages/ChangePasswordPage';
 import MemberDashboard from './pages/MemberDashboard';
 import AdminDashboard  from './pages/AdminDashboard';
 import MembersPage     from './pages/MembersPage';
@@ -16,6 +17,8 @@ function Guard({ children, adminOnly }) {
   const { user, loading } = useAuth();
   if (loading) return <div className="loading-container"><div className="spinner" /></div>;
   if (!user)   return <Navigate to="/login" replace />;
+  // Accounts still carrying an admin-issued temp password must change it first.
+  if (user.must_change_password) return <Navigate to="/change-password" replace />;
   if (adminOnly && user.role !== 'super_admin') return <Navigate to="/my-records" replace />;
   return children;
 }
@@ -33,6 +36,7 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/signup" element={<SignupPage />} />
+          <Route path="/change-password" element={<ChangePasswordPage />} />
           <Route path="/" element={<Guard><Layout /></Guard>}>
             <Route index element={<HomeRedirect />} />
             <Route path="my-records"           element={<Guard><MemberDashboard /></Guard>} />

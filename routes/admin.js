@@ -247,6 +247,7 @@ router.post('/members', authenticate, requireSuperAdmin, async (req, res) => {
       deptCode: dCode,
       role: 'member',
       isActive: true,
+      mustChangePassword: true,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     });

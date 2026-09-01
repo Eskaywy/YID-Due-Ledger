@@ -22,6 +22,7 @@ const publicUser = (user, regionName = null, regionCode = null) => ({
   dept_code: user.deptCode ?? null,
   role: user.role ?? 'member',
   is_active: user.isActive ?? true,
+  must_change_password: user.mustChangePassword === true,
   created_at: user.createdAt ?? null,
   updated_at: user.updatedAt ?? null,
 });
@@ -226,6 +227,7 @@ router.put('/change-password', authenticate, async (req, res) => {
     const newHash = await bcrypt.hash(newPassword, 10);
     await db.collection('users').doc(req.user.id).update({
       passwordHash: newHash,
+      mustChangePassword: false,
       updatedAt: new Date().toISOString(),
     });
 
