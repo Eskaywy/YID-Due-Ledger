@@ -1,5 +1,6 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
 const multer = require('multer');
 const { parse } = require('csv-parse/sync');
@@ -182,22 +183,24 @@ router.get('/members/:id', authenticate, requireSuperAdmin, async (req, res) => 
     }
 
     const member = memberDoc.data();
+
+    // Region lookup and the three collection queries are independent, so run
+    // them concurrently instead of four sequential Firestore round trips.
+    const [regionDoc, duesSnapshot, programPledgesSnapshot, otherPledgesSnapshot] = await Promise.all([
+      member.regionId ? db.collection('regions').doc(member.regionId).get() : Promise.resolve(null),
+      db.collection('monthlyDues').where('userId', '==', req.params.id).orderBy('dueYear', 'desc').orderBy('dueMonth', 'desc').get(),
+      db.collection('programPledges').where('userId', '==', req.params.id).orderBy('createdAt', 'desc').get(),
+      db.collection('otherPledges').where('userId', '==', req.params.id).orderBy('createdAt', 'desc').get(),
+    ]);
+
     let regionName = null, regionCode = null;
-    if (member.regionId) {
-      const regionDoc = await db.collection('regions').doc(member.regionId).get();
-      if (regionDoc.exists) {
-        regionName = regionDoc.data().name;
-        regionCode = regionDoc.data().code;
-      }
+    if (regionDoc && regionDoc.exists) {
+      regionName = regionDoc.data().name;
+      regionCode = regionDoc.data().code;
     }
 
-    const duesSnapshot = await db.collection('monthlyDues').where('userId', '==', req.params.id).orderBy('dueYear', 'desc').orderBy('dueMonth', 'desc').get();
     const dues = duesSnapshot.docs.map(doc => mapDue(doc.data()));
-
-    const programPledgesSnapshot = await db.collection('programPledges').where('userId', '==', req.params.id).orderBy('createdAt', 'desc').get();
     const programPledges = programPledgesSnapshot.docs.map(doc => mapProgramPledge(doc.data()));
-
-    const otherPledgesSnapshot = await db.collection('otherPledges').where('userId', '==', req.params.id).orderBy('createdAt', 'desc').get();
     const otherPledges = otherPledgesSnapshot.docs.map(doc => mapOtherPledge(doc.data()));
 
     res.json({
@@ -228,7 +231,9 @@ router.post('/members', authenticate, requireSuperAdmin, async (req, res) => {
     const dCode = (dept_code || 'MED').toUpperCase();
     const userId = uuidv4();
     const userIdCode = await generateUserId(regionCode, dCode);
-    const tempPass = 'Member@2025';
+    // Cryptographically random temp password instead of a fixed shared one.
+    // Keeps the Member@… shape the password policy expects (upper, lower, digit, symbol).
+    const tempPass = `Member@${crypto.randomBytes(4).toString('hex')}`;
     const hash = await bcrypt.hash(tempPass, 10);
 
     await db.collection('users').doc(userId).set({
@@ -265,6 +270,14 @@ router.put('/members/:id', authenticate, requireSuperAdmin, async (req, res) => 
     delete before.passwordHash;
 
     const { full_name, email, position, region_id, dept_code, is_active } = req.body;
+
+    // Enforce the same email-uniqueness rule as member creation so an admin
+    // edit cannot collide two accounts onto one login identity.
+    if (email && email.toLowerCase() !== String(before.email).toLowerCase()) {
+      const dupSnapshot = await db.collection('users').where('email', '==', email.toLowerCase()).get();
+      if (!dupSnapshot.empty) return res.status(409).json({ error: 'Email already exists' });
+    }
+
     const updateData = {
       fullName: full_name || before.fullName,
       email: email || before.email,
