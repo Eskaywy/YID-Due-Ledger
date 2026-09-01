@@ -39,3 +39,7 @@ data/*.sqlite
 
 # Firebase service account key (keep secure!)
 serviceAccountKey.json
+
+# Local dev server logs
+frontend-dev.log
+frontend-dev-err.log
