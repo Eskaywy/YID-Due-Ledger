@@ -17,7 +17,9 @@
     "scripts:verify": "node scripts/verify-queries.js",
     "scripts:create-indexes": "node scripts/create-indexes.js",
     "scripts:preview": "node scripts/preview-check.js",
-    "indexes:list": "npx --yes firebase-tools firestore:indexes"
+    "indexes:list": "npx --yes firebase-tools firestore:indexes",
+    "deploy:vercel": "vercel --prod",
+    "deploy:vercel:preview": "vercel"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

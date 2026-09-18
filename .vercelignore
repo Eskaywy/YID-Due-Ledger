@@ -1,0 +1,26 @@
+# Vercel deploy ignores — everything not needed for the production build
+node_modules/
+functions/node_modules/
+.git/
+.github/
+.vscode/
+.idea/
+*.log
+*.tmp
+*.temp
+.DS_Store
+Thumbs.db
+data/
+uploads/
+scripts/
+preflight-check.js
+preview-check.js
+verify-queries.js
+create-indexes.js
+vercel.json
+firebase.json
+.firebaserc
+firestore.indexes.json
+serviceAccountKey.json
+env*
+api/index.js

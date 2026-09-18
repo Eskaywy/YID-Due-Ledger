@@ -278,3 +278,70 @@ npm run scripts:create-indexes       # create Firestore composite indexes
 npm run scripts:verify               # verify indexes work with real queries
 npm run scripts:preview              # end-to-end dev-server + API check
 ```
+
+---
+
+### Option B — Vercel
+
+The project can also be deployed to [Vercel](https://vercel.com/) as a static frontend + serverless API. Vercel builds the Vite frontend automatically and deploys `api/index.js` as a serverless function.
+
+#### One-time setup
+
+1. Push the repo to GitHub (or GitLab/Bitbucket).
+2. In the [Vercel Dashboard](https://vercel.com/dashboard), click **Add New → Project** and import the repo.
+3. Vercel auto-detects `vercel.json`. Keep the defaults:
+   - **Root Directory**: the repo root (where `package.json`, `server.js`, and `vercel.json` live).
+   - **Framework Preset**: leave as "Vercel" (auto-detected from `vercel.json` builds).
+   - **Build Command**: leave as default (`npm run build` from the `frontend/` directory).
+   - **Output Directory**: `frontend/dist` (set in `vercel.json` under `@vercel/static-build`).
+4. Add the following **Environment Variables** in the Vercel project settings:
+   | Variable | Value |
+   |----------|-------|
+   | `JWT_SECRET` | your production secret (use the same value as locally) |
+   | `CLIENT_URL` | your Vercel deployment URL (e.g. `https://yid-due-ledger.vercel.app`) |
+   | `PORT` | `3001` (may be ignored by Vercel; keep it anyway) |
+   | `NODE_ENV` | `production` |
+
+   > **Note**: `serviceAccountKey.json` is **not** needed in Vercel. `firebaseAdmin.js` detects `process.env.VERCEL` and uses Application Default Credentials instead.
+
+5. Click **Deploy**.
+
+#### Deploy from CLI
+
+```bash
+npm install -g vercel
+vercel login
+vercel --prod          # or: npm run deploy:vercel
+```
+
+For a preview deployment (shared URL, not production):
+
+```bash
+vercel                 # or: npm run deploy:vercel:preview
+```
+
+#### How Vercel routing works
+
+- `/api/*` → routed to `api/index.js` (Vercel serverless function, handles the Express app)
+- Everything else → served as static files from `frontend/dist/`
+- SPA routes (e.g. `/members`, `/admin`) → fall back to `index.html` via the catch-all route
+
+> **Note**: `server.js` skips static file serving when `process.env.VERCEL === 'true'` (line 27). Vercel handles the frontend via CDN, not Express.
+
+---
+
+## How to choose
+
+| | Firebase | Vercel |
+|--|----------|--------|
+| Frontend hosting | Firebase Hosting (CDN) | Vercel Edge Network |
+| Backend (API) | Cloud Functions (Node.js) | Vercel Serverless Functions |
+| Database | Firestore (same for both) | Firestore (same for both) |
+| Auth | Firebase Auth (same for both) | Firebase Auth (same for both) |
+| Cold starts | ~1-2s (gen 2 functions) | ~100-500ms (Vercel is faster) |
+| Free tier | 10GB/mo bandwidth, 50k reads/day | 100GB/mo bandwidth, 100k invocations/mo |
+| Best for | Firebase-native projects, easy setup | Faster cold starts, broader toolchain |
+
+Both options use the **same** Firestore database and Firebase Auth —
+deploying to either does not affect your data. You can even deploy to
+both simultaneously (e.g. staging on Vercel, production on Firebase).

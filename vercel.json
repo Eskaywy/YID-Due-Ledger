@@ -1,0 +1,28 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "frontend/package.json",
+      "use": "@vercel/static-build",
+      "config": {
+        "root": "frontend",
+        "install": "npm install",
+        "build": "npm run build"
+      }
+    },
+    {
+      "src": "api/index.js",
+      "use": "@vercel/node",
+      "config": {
+        "maxMemory": 1024,
+        "maxDuration": 30,
+        "includeFiles": "routes/**/*,middleware/**/*,db.js,firebaseAdmin.js,package.json,api/index.js,server.js"
+      }
+    }
+  ],
+  "routes": [
+    { "src": "/api/(.*)", "dest": "/api/index.js" },
+    { "handle": "filesystem" },
+    { "src": "/(.*)", "dest": "/index.html" }
+  ]
+}

@@ -22,7 +22,11 @@ app.use('/api/records', require('./routes/records'));
 
 app.get('/api/health', (_, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
 
-if (process.env.NODE_ENV === 'production' || !process.env.NODE_ENV) {
+// Skip static file serving when running on Vercel — the frontend is served
+// by Vercel's static build (CDN), not by this Express app.
+const isVercel = process.env.VERCEL === 'true';
+
+if ((process.env.NODE_ENV === 'production' || !process.env.NODE_ENV) && !isVercel) {
   const distPath = path.join(__dirname, 'frontend', 'dist');
   app.use(express.static(distPath));
   // Use a param-less catch-all for newer express
