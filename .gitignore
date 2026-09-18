@@ -54,3 +54,5 @@ data/*.sqlite
 
 # Firebase service account key (keep secure!)
 serviceAccountKey.json
+.vercel
+.env*
