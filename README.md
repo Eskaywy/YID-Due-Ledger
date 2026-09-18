@@ -30,7 +30,10 @@ Members verify their own records; the Super Admin manages everything.
 ## Quick Start
 
 ### Prerequisites
-- Node.js 18+
+- Node.js 20+ (recommended; Node 18 also works)
+- [Firebase CLI](https://firebase.google.com/docs/cli) (`npm install -g firebase-tools`)
+- A [Firebase project](https://console.firebase.google.com/) with Cloud Firestore and Authentication enabled
+- A service-account key JSON file for local development (never commit it)
 
 ### Install & Run
 
@@ -39,9 +42,9 @@ Members verify their own records; the Super Admin manages everything.
 npm install
 
 # 2. Install & build frontend
-cd frontend && npm install && npm run build && cd ..
+npm run build
 
-# 3. Start the server (serves both API + frontend)
+# 3. Start the server (serves both API + frontend in production mode)
 NODE_ENV=production node server.js
 ```
 
@@ -61,27 +64,61 @@ Frontend dev server: http://localhost:5173
 
 ---
 
-## Project Structure
+### Project Structure
 
 ```
-drdp/
-├── server.js              # Express app entry point
-├── db.js                  # sql.js database, schema, seed data
+yid-due-ledger/
+├── package.json              # Backend deps + scripts (npm run build/deploy)
+├── server.js                 # Express app entry point (exportable for Functions)
+├── db.js                     # Firestore DB init + seed data
+├── firebaseAdmin.js          # Firebase Admin SDK init (local + Cloud Functions)
+├── firebase.json             # Hosting + Functions + Firestore config
+├── firestore.indexes.json    # Composite Firestore indexes
+├── .firebaserc               # Firebase project alias (yid-due-ledger)
+├── .env.example              # Template for environment variables
+├── serviceAccountKey.json    # Service account key for local dev (gitignored)
 ├── middleware/
-│   ├── auth.js            # JWT auth + requireSuperAdmin guard
-│   └── audit.js           # Audit log writer
+│   ├── auth.js               # JWT auth + requireSuperAdmin guard
+│   └── audit.js              # Audit log writer
 ├── routes/
-│   ├── auth.js            # POST /login, GET /me, PUT /change-password
-│   ├── members.js         # Member self-service: GET /my/dues, /pledges, /summary
-│   ├── admin.js           # Super Admin CRUD, batch upload, export
-│   └── records.js         # Individual dues & pledge CRUD
-├── data/
-│   └── drdp.sqlite        # SQLite database (auto-created on first run)
-├── uploads/               # Temporary batch upload files
-└── frontend/
+│   ├── auth.js               # POST /login, GET /me, PUT /change-password, signup
+│   ├── members.js            # Member self-service: GET /my/dues, /pledges, /summary
+│   ├── admin.js              # Super Admin CRUD, batch upload, export
+│   └── records.js            # Individual dues & pledge CRUD
+├── functions/                # Firebase Cloud Functions (Express backend)
+│   ├── package.json
+│   └── index.js              # onRequest(app) — wraps server.js
+├── scripts/                  # Utility / admin scripts
+│   ├── preflight-check.js    # Verify files, modules, and live Firebase conn
+│   ├── preview-check.js      # End-to-end dev-server + API check
+│   ├── create-indexes.js     # Create Firestore composite indexes via REST API
+│   └── verify-queries.js     # Verify the indexes work with real queries
+├── uploads/                  # Temporary batch-upload files (gitignored)
+│   └── .gitkeep
+├── data/                     # Legacy data dir (now Firestore-backed)
+└── frontend/                 # React + Vite SPA
+    ├── package.json
+    ├── vite.config.js
+    ├── index.html
+    ├── tsconfig.json
+    ├── public/
+    │   ├── favicon.svg
+    │   └── icons.svg
     └── src/
+        ├── index.css
+        ├── main.jsx
+        ├── App.jsx
+        ├── assets/
+        │   └── hero.png
+        ├── components/
+        │   ├── Layout.jsx            # Sidebar + topbar
+        │   └── CreateMemberModal.jsx
+        ├── context/
+        │   └── AuthContext.jsx       # JWT auth state
         ├── pages/
         │   ├── LoginPage.jsx
+        │   ├── SignupPage.jsx
+        │   ├── ChangePasswordPage.jsx
         │   ├── MemberDashboard.jsx   # Self-service ledger view
         │   ├── AdminDashboard.jsx    # Stats overview
         │   ├── MembersPage.jsx       # Member list + search + export
@@ -89,13 +126,9 @@ drdp/
         │   ├── BatchUploadPage.jsx   # CSV/Excel upload
         │   ├── AuditLogsPage.jsx     # Action history
         │   └── ProfilePage.jsx       # Own profile + change password
-        ├── components/
-        │   ├── Layout.jsx            # Sidebar + topbar
-        │   └── CreateMemberModal.jsx
-        ├── context/
-        │   └── AuthContext.jsx       # JWT auth state
         └── utils/
-            └── api.js                # Axios client
+            ├── api.js                # Axios client (env-aware base URL)
+            └── firebase.js           # Firebase Web SDK init (client-side)
 ```
 
 ---
@@ -196,3 +229,52 @@ IDs are auto-generated and sequential per region + department + month.
 | JWT_SECRET   | yid-due-ledger-secret-key-change-in-production | **Change in prod!**  |
 | CLIENT_URL   | http://localhost:5173                | CORS allowed origin  |
 | NODE_ENV     | (unset)                              | Set to `production`  |
+
+---
+
+## Deployment
+
+### Option A — Firebase Hosting (recommended)
+
+The project is set up for a single-command Firebase deploy that serves the
+static frontend via **Firebase Hosting** and the Express API via
+**Cloud Functions** (rewritten from `/api/*`).
+
+#### One-time setup
+
+```bash
+# Install the Functions dependencies locally
+npm run init:functions
+
+# Log in to Firebase and select your project
+firebase login
+firebase use yid-due-ledger
+```
+
+#### Deploy
+
+```bash
+# Build frontend + deploy hosting + functions + Firestore indexes
+npm run build
+npm run deploy       # or: firebase deploy
+```
+
+To deploy only specific pieces:
+
+```bash
+npm run deploy:hosting    # frontend only
+npm run deploy:functions  # backend API only
+npm run deploy:indexes    # Firestore composite indexes
+```
+
+> **Note**: `serviceAccountKey.json` is **not** needed in Cloud Functions —
+> the runtime provides Application Default Credentials automatically.
+
+#### Useful scripts
+
+```bash
+npm run scripts:preflight            # verify files + live Firebase connection
+npm run scripts:create-indexes       # create Firestore composite indexes
+npm run scripts:verify               # verify indexes work with real queries
+npm run scripts:preview              # end-to-end dev-server + API check
+```

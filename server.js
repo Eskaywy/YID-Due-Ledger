@@ -22,7 +22,7 @@ app.use('/api/records', require('./routes/records'));
 
 app.get('/api/health', (_, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
 
-if (process.env.NODE_ENV === 'production') {
+if (process.env.NODE_ENV === 'production' || !process.env.NODE_ENV) {
   const distPath = path.join(__dirname, 'frontend', 'dist');
   app.use(express.static(distPath));
   // Use a param-less catch-all for newer express
@@ -37,6 +37,18 @@ app.use((err, req, res, next) => {
   res.status(err.status || 500).json({ error: err.message || 'Internal server error' });
 });
 
-initDatabase().then(() => {
+// Initialize the database (Firestore seed). Runs once on cold-start / app start;
+// idempotent because it checks for existing data before seeding.
+initDatabase().catch(err => {
+  console.error('DB init failed:', err);
+  if (require.main === module) process.exit(1);
+});
+
+// Export the Express app so it can be consumed by Firebase Cloud Functions
+// (functions/index.js). When run directly via `node server.js`, start the
+// HTTP listener for local development and production (self-hosted) mode.
+if (require.main === module) {
   app.listen(PORT, () => console.log(`YID Due Ledger running on http://localhost:${PORT}`));
-}).catch(err => { console.error('DB init failed:', err); process.exit(1); });
+}
+
+module.exports = app;

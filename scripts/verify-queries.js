@@ -4,7 +4,9 @@
  * throw FAILED_PRECONDITION — so PASS here means the index works end-to-end.
  */
 const fs = require('fs');
-const { db } = require('./firebaseAdmin');
+const path = require('path');
+const ROOT = path.join(__dirname, '..');
+const { db } = require(path.join(ROOT, 'firebaseAdmin.js'));
 
 (async () => {
   const out = [];
@@ -35,6 +37,6 @@ const { db } = require('./firebaseAdmin');
   } catch (e) {
     out.push('RESULT: ERROR - ' + e.message);
   }
-  fs.writeFileSync('verify-queries-result.txt', out.join('\n'));
+    fs.writeFileSync(path.join(ROOT, 'verify-queries-result.txt'), out.join('\n'));
   console.log(out.join('\n'));
 })();

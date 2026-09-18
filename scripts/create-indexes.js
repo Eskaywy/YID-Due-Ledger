@@ -3,8 +3,10 @@
  * REST API, using the service account key (no firebase login needed).
  * Rerunnable: already-existing indexes are reported and skipped.
  */
-const { GoogleAuth } = require('google-auth-library');
+const path = require('path');
 const fs = require('fs');
+const { GoogleAuth } = require('google-auth-library');
+const ROOT = path.join(__dirname, '..');
 
 const PROJECT = 'yid-due-ledger';
 const BASE = `https://firestore.googleapis.com/v1/projects/${PROJECT}/databases/(default)/collectionGroups`;
@@ -30,7 +32,7 @@ const INDEXES = [
   const out = [];
   try {
     const auth = new GoogleAuth({
-      keyFile: 'serviceAccountKey.json',
+            keyFile: path.join(ROOT, 'serviceAccountKey.json'),
       scopes: ['https://www.googleapis.com/auth/cloud-platform'],
     });
     const client = await auth.getClient();
@@ -65,6 +67,6 @@ const INDEXES = [
   } catch (e) {
     out.push('RESULT: ERROR - ' + (e && e.message));
   }
-  fs.writeFileSync('indexes-rest-result.txt', out.join('\n'));
+    fs.writeFileSync(path.join(ROOT, 'indexes-rest-result.txt'), out.join('\n'));
   console.log(out.join('\n'));
 })();

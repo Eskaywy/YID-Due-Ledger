@@ -1,10 +1,15 @@
 # Dependencies
 node_modules/
 frontend/node_modules/
+functions/node_modules/
 
 # Build outputs
 frontend/dist/
 build/
+
+# Functions
+functions/.env
+functions/.runtimeconfig.json
 
 # Environment files
 .env
@@ -21,11 +26,18 @@ build/
 *~
 
 # Logs
+*.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 lerna-debug.log*
 server.log
+firebase-debug.log
+
+# Script output files
+preview-check.txt
+indexes-rest-result.txt
+verify-queries-result.txt
 
 # Temporary files
 *.tmp
@@ -33,15 +45,9 @@ server.log
 .DS_Store
 Thumbs.db
 
-# Database
+# Database (migrated to Firestore — these are stale dev artifacts)
 data/*.db
 data/*.sqlite
 
 # Firebase service account key (keep secure!)
 serviceAccountKey.json
-
-# Local dev server logs
-frontend-dev.log
-frontend-dev-err.log
-server-dev.log
-server-dev-err.log

@@ -1,15 +1,23 @@
 const admin = require("firebase-admin");
 const { getFirestore } = require("firebase-admin/firestore");
 const { getAuth } = require("firebase-admin/auth");
-const serviceAccount = require("./serviceAccountKey.json");
 
 // firebase-admin v13+ exposes cert() at the top level; older versions used admin.credential.cert().
 const certFn = admin.credential?.cert ?? admin.cert;
 
-const app = admin.initializeApp({
-  credential: certFn(serviceAccount),
-  databaseURL: "https://yid-due-ledger-default-rtdb.firebaseio.com", // Optional if using Firestore
-});
+// Detect Cloud Functions / Cloud Run environment: Application Default Credentials
+// (ADC) are automatically provided. In local development, fall back to the
+// service-account key file.
+const isInCloud = !!(process.env.GCLOUD_PROJECT || process.env.FUNCTIONS_TARGET);
+
+const app = admin.initializeApp(
+  isInCloud
+    ? {} // ADC — no explicit credential or databaseURL needed
+    : {
+        credential: certFn(require("./serviceAccountKey.json")),
+        databaseURL: "https://yid-due-ledger-default-rtdb.firebaseio.com",
+      }
+);
 
 // firebase-admin v13+ removed the top-level admin.firestore()/admin.auth() accessors;
 // use the modular getFirestore()/getAuth() with the app instance instead.

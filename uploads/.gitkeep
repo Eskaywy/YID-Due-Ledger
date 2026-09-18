@@ -1,0 +1,2 @@
+# This directory holds temporary batch-upload files (CSV/Excel).
+# The file is kept so the directory persists in git even when empty.

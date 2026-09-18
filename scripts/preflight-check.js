@@ -1,10 +1,11 @@
 /**
  * Preflight check: verifies project files, loads every server module, and
  * pings the live Firebase project (read-only) to prove real connectivity.
- * Run with:  node preflight-check.js
+  * Run with:  node scripts/preflight-check.js
  */
 const fs = require('fs');
 const path = require('path');
+const ROOT = path.join(__dirname, '..');
 
 const REQUIRED_FILES = [
   'server.js', 'db.js', 'firebaseAdmin.js', 'package.json',
@@ -24,24 +25,29 @@ const withTimeout = (p, ms, label) => Promise.race([
 
 console.log('--- 1. Required files ---');
 for (const f of REQUIRED_FILES) {
-  if (fs.existsSync(path.join(__dirname, f))) console.log('OK   ' + f);
+  if (fs.existsSync(path.join(ROOT, f))) console.log('OK   ' + f);
   else fail(f + '  (MISSING FILE)');
 }
 
 console.log('\n--- 2. Module loading (require every server module) ---');
 const MODULES = [
-  './firebaseAdmin.js', './db.js',
-  './middleware/auth.js', './middleware/audit.js',
-  './routes/auth.js', './routes/members.js', './routes/admin.js', './routes/records.js',
+  path.join(ROOT, 'firebaseAdmin.js'),
+  path.join(ROOT, 'db.js'),
+  path.join(ROOT, 'middleware', 'auth.js'),
+  path.join(ROOT, 'middleware', 'audit.js'),
+  path.join(ROOT, 'routes', 'auth.js'),
+  path.join(ROOT, 'routes', 'members.js'),
+  path.join(ROOT, 'routes', 'admin.js'),
+  path.join(ROOT, 'routes', 'records.js'),
 ];
 for (const m of MODULES) {
-  try { require(m); console.log('OK   ' + m); }
-  catch (e) { fail(m + '  -> ' + e.message); }
+  try { require(m); console.log('OK   ' + path.relative(ROOT, m)); }
+  catch (e) { fail(path.relative(ROOT, m) + '  -> ' + e.message); }
 }
 
 console.log('\n--- 3. Live Firebase connection (read-only) ---');
 // firebaseAdmin.js is cached from section 2, so this reuses the same app instance.
-const { db, auth } = require('./firebaseAdmin');
+const { db, auth } = require(path.join(ROOT, 'firebaseAdmin.js'));
 
 (async () => {
   try {

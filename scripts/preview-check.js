@@ -4,6 +4,8 @@
  * Run with:  node preview-check.js
  */
 const fs = require('fs');
+const path = require('path');
+const ROOT = path.join(__dirname, '..');
 const out = [];
 const get = async (url, timeoutMs = 8000) => {
   const ctrl = new AbortController();
@@ -36,7 +38,7 @@ const get = async (url, timeoutMs = 8000) => {
 
   // 4. Live Firestore state (collections after boot-time seeding)
   try {
-    const { db } = require('./firebaseAdmin');
+        const { db } = require(path.join(ROOT, 'firebaseAdmin.js'));
     const cols = await db.listCollections();
     const names = [];
     for (const c of cols) {
@@ -47,6 +49,6 @@ const get = async (url, timeoutMs = 8000) => {
   } catch (e) { out.push('4. FIREBASE state check FAILED: ' + e.message); }
 
   const text = out.join('\n');
-  fs.writeFileSync('preview-check.txt', text);
+    fs.writeFileSync(path.join(ROOT, 'preview-check.txt'), text);
   console.log(text);
 })();
