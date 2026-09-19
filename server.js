@@ -26,7 +26,12 @@ app.get('/api/health', (_, res) => res.json({ status: 'ok', time: new Date().toI
 // by Vercel's static build (CDN), not by this Express app.
 const isVercel = process.env.VERCEL === 'true';
 
-if ((process.env.NODE_ENV === 'production' || !process.env.NODE_ENV) && !isVercel) {
+// Only serve static files when this file is run directly (node server.js),
+// not when it's required as a module by Firebase Cloud Functions or Vercel.
+// In those environments, the platform (Firebase Hosting / Vercel CDN) serves
+// the frontend, and this Express app only handles /api/* requests.
+const isMainModule = require.main === module;
+if ((process.env.NODE_ENV === 'production' || !process.env.NODE_ENV) && !isVercel && isMainModule) {
   const distPath = path.join(__dirname, 'frontend', 'dist');
   app.use(express.static(distPath));
   // Use a param-less catch-all for newer express
