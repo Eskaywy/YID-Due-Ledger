@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import API from '../utils/api';
-import { ClipboardList, ShieldCheck } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import API, { errorMessage } from '../utils/api';
+import { ClipboardList, ShieldCheck, RefreshCw } from 'lucide-react';
 
 const ACTION_LABELS = {
   CREATE_MEMBER:'Created member', UPDATE_MEMBER:'Updated member', DELETE_MEMBER:'Archived member',
@@ -20,8 +20,34 @@ const TC = {
 export default function AuditLogsPage() {
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
-  useEffect(() => { API.get('/admin/audit-logs').then(r => setLogs(r.data)).finally(() => setLoading(false)); }, []);
-  if (loading) return <div className="loading-container"><div className="spinner"/></div>;
+  const [error, setError] = useState(null);
+  const [reloadKey, setReloadKey] = useState(0);
+
+  // Failures show an error + retry, not a misleading "No audit entries yet"
+  // empty state (audit H1).
+  const load = useCallback(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    API.get('/admin/audit-logs')
+      .then(r => { if (!cancelled) setLogs(r.data); })
+      .catch(err => { if (!cancelled) setError(errorMessage(err, 'Failed to load audit logs.')); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => load(), [load, reloadKey]);
+
+  if (loading) return <div className="loading-container" role="status" aria-label="Loading audit logs"><div className="spinner"/></div>;
+
+  if (error) return (
+    <div className="alert alert-error" role="alert" style={{flexDirection:'column',alignItems:'flex-start',gap:12}}>
+      <span>{error}</span>
+      <button className="btn btn-outline btn-sm" onClick={() => setReloadKey(k => k + 1)}>
+        <RefreshCw size={13}/> Try again
+      </button>
+    </div>
+  );
   return (
     <div>
       <div className="alert alert-info" style={{marginBottom:20}}><ShieldCheck size={15}/> Audit logs record every administrative action. Only Super Admins can view this page.</div>

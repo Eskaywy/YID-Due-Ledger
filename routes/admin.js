@@ -109,14 +109,16 @@ router.get('/stats', authenticate, requireSuperAdmin, async (req, res) => {
 // List members
 router.get('/members', authenticate, requireSuperAdmin, async (req, res) => {
   try {
-    const { search, region_id, page = 1, limit = 15 } = req.query;
+    const { search, region_id, page = 1, limit = 15, archived } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
     let query = supabase
       .from('users')
       .select('*, regions(name)')
       .eq('role', 'member')
-      .eq('is_active', true);
+      // archived=1 shows archived members so they can be restored (audit H5);
+      // default remains active-only.
+      .eq('is_active', archived === '1' ? false : true);
     if (region_id) {
       query = query.eq('region_id', region_id);
     }
@@ -321,6 +323,31 @@ router.delete('/members/:id', authenticate, requireSuperAdmin, async (req, res) 
   }
 });
 
+// Restore an archived member (audit H5 — archive is no longer one-way).
+router.post('/members/:id/restore', authenticate, requireSuperAdmin, async (req, res) => {
+  try {
+    const { data: member, error: memberErr } = await supabase
+      .from('users')
+      .select('full_name, is_active')
+      .eq('id', req.params.id)
+      .single();
+    if (memberErr || !member) return res.status(404).json({ error: 'Member not found' });
+    if (member.is_active) return res.status(400).json({ error: 'Member is already active' });
+
+    const { error: updateErr } = await supabase
+      .from('users')
+      .update({ is_active: true, updated_at: new Date().toISOString() })
+      .eq('id', req.params.id);
+    if (updateErr) throw updateErr;
+
+    await auditLog(req.user.id, 'UPDATE_MEMBER', 'users', req.params.id, { is_active: false }, { is_active: true, fullName: member.full_name });
+    res.json({ message: 'Member restored' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to restore member' });
+  }
+});
+
 
 // Get regions
 router.get('/regions', authenticate, requireSuperAdmin, async (req, res) => {
@@ -447,7 +474,7 @@ router.post('/batch-upload', authenticate, requireSuperAdmin, upload.single('fil
 // Export members to Excel
 router.get('/export', authenticate, requireSuperAdmin, async (req, res) => {
   try {
-    const { region_id } = req.query;
+    const { region_id, search } = req.query;
     let query = supabase
       .from('users')
       .select('*, regions(name)')
@@ -460,7 +487,7 @@ router.get('/export', authenticate, requireSuperAdmin, async (req, res) => {
     const { data: rows, error } = await query;
     if (error) throw error;
 
-    const members = (rows || []).map(row => ({
+    let members = (rows || []).map(row => ({
       user_id_code: row.user_id_code,
       full_name: row.full_name,
       email: row.email,
@@ -468,6 +495,15 @@ router.get('/export', authenticate, requireSuperAdmin, async (req, res) => {
       region: row.regions?.name ?? '',
       created_at: row.created_at,
     }));
+    // Honour the on-screen search filter so exports match what the admin sees
+    // (audit F6).
+    if (search) {
+      const s = search.toLowerCase();
+      members = members.filter(m =>
+        (m.full_name || '').toLowerCase().includes(s) ||
+        (m.user_id_code || '').toLowerCase().includes(s) ||
+        (m.email || '').toLowerCase().includes(s));
+    }
     members.sort((a, b) => a.region.localeCompare(b.region) || a.full_name.localeCompare(b.full_name));
 
     const wb = XLSX.utils.book_new();

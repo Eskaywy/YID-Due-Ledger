@@ -1,13 +1,14 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
-import API from '../utils/api';
-import { AlertCircle, CheckCircle, Clock, TrendingDown, CreditCard, Star, BookOpen } from 'lucide-react';
+import API, { errorMessage } from '../utils/api';
+import { AlertCircle, CheckCircle, Clock, TrendingDown, CreditCard, Star, BookOpen, RefreshCw } from 'lucide-react';
 
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const fmt = n => '₦' + Number(n||0).toLocaleString('en-NG', { minimumFractionDigits: 2 });
 
 function Badge({ status }) {
-  return <span className={`badge badge-${status}`}>{status.charAt(0).toUpperCase()+status.slice(1)}</span>;
+  const s = status || 'pending';
+  return <span className={`badge badge-${s}`}>{s.charAt(0).toUpperCase()+s.slice(1)}</span>;
 }
 
 export default function MemberDashboard() {
@@ -18,21 +19,43 @@ export default function MemberDashboard() {
   const [other, setOther] = useState([]);
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
-  useEffect(() => {
+  // Failures show an error + retry instead of fake "no records" empty states
+  // (audit H1).
+  const load = useCallback(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
     Promise.all([
       API.get('/members/my/dues'),
       API.get('/members/my/pledges/program'),
       API.get('/members/my/pledges/other'),
       API.get('/members/my/summary'),
     ]).then(([d,p,o,s]) => {
+      if (cancelled) return;
       setDues(d.data); setProg(p.data); setOther(o.data); setSummary(s.data);
-    }).finally(() => setLoading(false));
+    }).catch(err => {
+      if (!cancelled) setError(errorMessage(err, 'Failed to load your records.'));
+    }).finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
   }, []);
+
+  useEffect(() => load(), [load, reloadKey]);
 
   const initials = user?.full_name?.split(' ').slice(0,2).map(n=>n[0]).join('').toUpperCase() || 'U';
 
-  if (loading) return <div className="loading-container"><div className="spinner"/></div>;
+  if (loading) return <div className="loading-container" role="status" aria-label="Loading your records"><div className="spinner"/></div>;
+
+  if (error) return (
+    <div className="alert alert-error" role="alert" style={{flexDirection:'column',alignItems:'flex-start',gap:12}}>
+      <span>{error}</span>
+      <button className="btn btn-outline btn-sm" onClick={() => setReloadKey(k => k + 1)}>
+        <RefreshCw size={13}/> Try again
+      </button>
+    </div>
+  );
 
   return (
     <div>

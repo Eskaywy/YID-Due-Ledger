@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import API from '../utils/api';
+import API, { errorMessage } from '../utils/api';
 import { CreditCard, Lock, CheckCircle } from 'lucide-react';
 
 export default function ProfilePage() {
@@ -20,7 +20,7 @@ export default function ProfilePage() {
       await API.put('/auth/change-password', { currentPassword: pwForm.currentPassword, newPassword: pwForm.newPassword });
       setPwSuccess('Password changed successfully.');
       setPwForm({ currentPassword:'', newPassword:'', confirm:'' });
-    } catch (err) { setPwError(err.response?.data?.error || 'Failed to change password.'); }
+    } catch (err) { setPwError(errorMessage(err, 'Failed to change password.')); }
     finally { setPwLoading(false); }
   };
 
@@ -44,15 +44,18 @@ export default function ProfilePage() {
       <div className="card">
         <div className="card-header"><span className="card-title"><Lock size={15} style={{verticalAlign:'middle',marginRight:7}}/>Change Password</span></div>
         <div className="card-body">
-          {pwError   && <div className="alert alert-error">{pwError}</div>}
-          {pwSuccess && <div className="alert alert-success"><CheckCircle size={14}/> {pwSuccess}</div>}
+          {pwError   && <div className="alert alert-error" role="alert">{pwError}</div>}
+          {pwSuccess && <div className="alert alert-success" role="status"><CheckCircle size={14}/> {pwSuccess}</div>}
           <form onSubmit={handlePasswordChange}>
-            <div className="form-group"><label className="form-label">Current Password</label><input type="password" value={pwForm.currentPassword} onChange={e=>set('currentPassword',e.target.value)} placeholder="Your current password"/></div>
+            <div className="form-group"><label className="form-label" htmlFor="pf-current">Current Password</label>
+              <input id="pf-current" type="password" value={pwForm.currentPassword} onChange={e=>set('currentPassword',e.target.value)} placeholder="Your current password" autoComplete="current-password"/></div>
             <div className="form-grid">
-              <div className="form-group"><label className="form-label">New Password</label><input type="password" value={pwForm.newPassword} onChange={e=>set('newPassword',e.target.value)} placeholder="Min. 8 characters"/></div>
-              <div className="form-group"><label className="form-label">Confirm New Password</label><input type="password" value={pwForm.confirm} onChange={e=>set('confirm',e.target.value)} placeholder="Repeat new password"/></div>
+              <div className="form-group"><label className="form-label" htmlFor="pf-new">New Password</label>
+                <input id="pf-new" type="password" value={pwForm.newPassword} onChange={e=>set('newPassword',e.target.value)} placeholder="Min. 8 characters" autoComplete="new-password"/></div>
+              <div className="form-group"><label className="form-label" htmlFor="pf-confirm">Confirm New Password</label>
+                <input id="pf-confirm" type="password" value={pwForm.confirm} onChange={e=>set('confirm',e.target.value)} placeholder="Repeat new password" autoComplete="new-password"/></div>
             </div>
-            <button type="submit" className="btn btn-primary" disabled={pwLoading}><Lock size={14}/> {pwLoading?'Saving…':'Update Password'}</button>
+            <button type="submit" className="btn btn-primary" disabled={pwLoading} aria-busy={pwLoading}><Lock size={14}/> {pwLoading?'Saving…':'Update Password'}</button>
           </form>
         </div>
       </div>

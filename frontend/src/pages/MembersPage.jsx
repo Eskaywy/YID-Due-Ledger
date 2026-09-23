@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import API from '../utils/api';
-import { Search, Plus, Download, Eye, Trash2, UserX } from 'lucide-react';
+import API, { errorMessage } from '../utils/api';
+import { Search, Plus, Download, Eye, Trash2, UserX, RotateCcw, Archive, RefreshCw } from 'lucide-react';
 import CreateMemberModal from '../components/CreateMemberModal';
 
 export default function MembersPage() {
@@ -11,46 +11,99 @@ export default function MembersPage() {
   const [total, setTotal]     = useState(0);
   const [page, setPage]       = useState(1);
   const [loading, setLoading] = useState(true);
+  const [error, setError]     = useState(null);
   const [showCreate, setShowCreate] = useState(false);
   const [search, setSearch]         = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [filterRegion, setFilterRegion] = useState('');
+  const [archived, setArchived] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [actingId, setActingId] = useState(null);
   const [alert, setAlert] = useState(null);
+  const abortRef = useRef(null);
   const LIMIT = 15;
 
+  // Debounce search so typing doesn't fire one request per keystroke and
+  // exhaust the API rate limit (audit M6).
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  // Errors surface as an explicit error + retry — never a fake
+  // "No members found" empty state (audit H1). In-flight requests are
+  // cancelled so stale responses can't overwrite newer ones (audit M6).
   const fetchMembers = useCallback(async () => {
+    if (abortRef.current) abortRef.current.abort();
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
     setLoading(true);
+    setError(null);
     try {
       const p = new URLSearchParams({ page, limit: LIMIT });
-      if (search)       p.append('search', search);
-      if (filterRegion) p.append('region_id', filterRegion);
-      const res = await API.get(`/admin/members?${p}`);
+      if (debouncedSearch) p.append('search', debouncedSearch);
+      if (filterRegion)    p.append('region_id', filterRegion);
+      if (archived)        p.append('archived', '1');
+      const res = await API.get(`/admin/members?${p}`, { signal: ctrl.signal });
       setMembers(res.data.members);
       setTotal(res.data.total);
-    } catch {}
-    setLoading(false);
-  }, [page, search, filterRegion]);
+    } catch (err) {
+      if (err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError' || abortRef.current !== ctrl) return;
+      setError(errorMessage(err, 'Failed to load members.'));
+    } finally {
+      if (abortRef.current === ctrl) setLoading(false);
+    }
+  }, [page, debouncedSearch, filterRegion, archived]);
 
   useEffect(() => { fetchMembers(); }, [fetchMembers]);
-  useEffect(() => { API.get('/admin/regions').then(r => setRegions(r.data)); }, []);
+  useEffect(() => {
+    API.get('/admin/regions')
+      .then(r => setRegions(r.data))
+      .catch(err => setAlert({ type:'error', msg: errorMessage(err, 'Failed to load regions for filtering.') }));
+  }, []);
 
   const showAlert = (type, msg) => { setAlert({ type, msg }); setTimeout(() => setAlert(null), 4000); };
 
   const handleDelete = async (id, name) => {
-    if (!confirm(`Archive "${name}"? They will lose access.`)) return;
+    if (actingId) return;
+    if (!confirm(`Archive "${name}"? They will lose access. You can restore them later from the Archived view.`)) return;
+    setActingId(id);
     try {
       await API.delete(`/admin/members/${id}`);
-      showAlert('success', `${name} archived successfully.`);
+      showAlert('success', `${name} archived. Restore any time from the Archived view.`);
       fetchMembers();
-    } catch (err) { showAlert('error', err.response?.data?.error || 'Failed to archive member'); }
+    } catch (err) { showAlert('error', errorMessage(err, 'Failed to archive member')); }
+    finally { setActingId(null); }
+  };
+
+  // Restore path for archived members (audit H5 — archive is no longer a
+  // one-way door from the UI).
+  const handleRestore = async (id, name) => {
+    if (actingId) return;
+    setActingId(id);
+    try {
+      await API.post(`/admin/members/${id}/restore`);
+      showAlert('success', `${name} restored and can sign in again.`);
+      fetchMembers();
+    } catch (err) { showAlert('error', errorMessage(err, 'Failed to restore member')); }
+    finally { setActingId(null); }
   };
 
   const handleExport = async () => {
-    const p = new URLSearchParams();
-    if (filterRegion) p.append('region_id', filterRegion);
-    const res = await API.get(`/admin/export?${p}`, { responseType:'blob' });
-    const url = URL.createObjectURL(res.data);
-    const a = document.createElement('a'); a.href=url; a.download='members-export.xlsx'; a.click();
-    URL.revokeObjectURL(url);
+    if (exporting) return;
+    setExporting(true);
+    try {
+      const p = new URLSearchParams();
+      if (filterRegion)    p.append('region_id', filterRegion);
+      if (debouncedSearch) p.append('search', debouncedSearch);
+      const res = await API.get(`/admin/export?${p}`, { responseType:'blob', timeout: 60000 });
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement('a'); a.href=url; a.download='members-export.xlsx'; a.click();
+      URL.revokeObjectURL(url);
+      showAlert('success', 'Export downloaded.');
+    } catch (err) {
+      showAlert('error', errorMessage(err, 'Export failed. Please try again.'));
+    } finally { setExporting(false); }
   };
 
   const totalPages = Math.ceil(total / LIMIT);
@@ -58,36 +111,60 @@ export default function MembersPage() {
 
   return (
     <div>
-      {alert && <div className={`alert alert-${alert.type}`}>{alert.msg}</div>}
+      {alert && <div className={`alert alert-${alert.type}`} role={alert.type === 'error' ? 'alert' : 'status'}>{alert.msg}</div>}
 
       {/* Toolbar */}
       <div style={{display:'flex',gap:10,marginBottom:18,flexWrap:'wrap',alignItems:'center'}}>
         <div className="search-bar" style={{flex:'1 1 220px',minWidth:180}}>
           <Search size={15}/>
-          <input placeholder="Search name, ID, or email…"
+          <input placeholder="Search name, ID, or email…" aria-label="Search members"
             value={search} onChange={e => { setSearch(e.target.value); setPage(1); }}/>
         </div>
-        <select style={{width:'auto',minWidth:150}} value={filterRegion}
+        <select style={{width:'auto',minWidth:150}} value={filterRegion} aria-label="Filter by region"
           onChange={e => { setFilterRegion(e.target.value); setPage(1); }}>
           <option value="">All Regions</option>
           {regions.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
         </select>
-        <button className="btn btn-outline" onClick={handleExport}><Download size={14}/> Export</button>
-        <button className="btn btn-primary" onClick={() => setShowCreate(true)}><Plus size={14}/> Add Member</button>
+        {!archived && (
+          <>
+            <button className="btn btn-outline" onClick={handleExport} disabled={exporting} aria-busy={exporting}>
+              <Download size={14}/> {exporting ? 'Exporting…' : 'Export'}
+            </button>
+            <button className="btn btn-primary" onClick={() => setShowCreate(true)}><Plus size={14}/> Add Member</button>
+          </>
+        )}
+        <button className="btn btn-outline" onClick={() => { setArchived(a => !a); setPage(1); }}
+          aria-pressed={archived} title={archived ? 'Show active members' : 'Show archived members'}>
+          <Archive size={14}/> {archived ? 'Show Active Members' : 'Show Archived'}
+        </button>
       </div>
+
+      {archived && (
+        <div className="alert alert-info" role="status" style={{marginBottom:16}}>
+          Showing archived members. They cannot sign in until restored.
+        </div>
+      )}
 
       <div className="card">
         <div className="card-header">
-          <span className="card-title">All Members</span>
-          <span style={{fontSize:12.5,color:'var(--slate-400)'}}>{total} total</span>
+          <span className="card-title">{archived ? 'Archived Members' : 'All Members'}</span>
+        <span style={{fontSize:12.5,color:'var(--slate-400)'}}>{total} total</span>
         </div>
         <div className="table-wrapper">
           {loading ? (
-            <div className="loading-container"><div className="spinner"/></div>
+            <div className="loading-container" role="status" aria-label="Loading members"><div className="spinner"/></div>
+          ) : error ? (
+            <div className="empty-state" style={{padding:44}} role="alert">
+              <RefreshCw size={34}/>
+              <p style={{marginTop:8,color:'var(--red-500)'}}>{error}</p>
+              <button className="btn btn-outline btn-sm" style={{marginTop:14}} onClick={fetchMembers}>
+                <RefreshCw size={13}/> Try again
+              </button>
+            </div>
           ) : members.length === 0 ? (
             <div className="empty-state" style={{padding:44}}>
-              <UserX size={34}/><p style={{marginTop:8}}>No members found</p>
-              {search && <p style={{fontSize:12.5,marginTop:4}}>Try a different search</p>}
+              <UserX size={34}/><p style={{marginTop:8}}>{archived ? 'No archived members' : 'No members found'}</p>
+              {search && !archived && <p style={{fontSize:12.5,marginTop:4}}>Try a different search</p>}
             </div>
           ) : (
             <table>
@@ -116,12 +193,25 @@ export default function MembersPage() {
                     <td style={{fontSize:12.5,color:'var(--slate-400)'}}>{new Date(m.created_at).toLocaleDateString('en-NG')}</td>
                     <td>
                       <div style={{display:'flex',gap:5}}>
-                        <button className="btn btn-outline btn-sm" onClick={() => navigate(`/admin/members/${m.id}`)}>
-                          <Eye size={12}/>
-                        </button>
-                        <button className="btn btn-danger btn-sm" onClick={() => handleDelete(m.id, m.full_name)}>
-                          <Trash2 size={12}/>
-                        </button>
+                        {archived ? (
+                          <button className="btn btn-outline btn-sm" onClick={() => handleRestore(m.id, m.full_name)}
+                            disabled={actingId === m.id} aria-label={`Restore ${m.full_name}`}
+                            title="Restore member">
+                            <RotateCcw size={12}/> Restore
+                          </button>
+                        ) : (
+                          <>
+                            <button className="btn btn-outline btn-sm" onClick={() => navigate(`/admin/members/${m.id}`)}
+                              aria-label={`View ${m.full_name}`} title="View member">
+                              <Eye size={12}/>
+                            </button>
+                            <button className="btn btn-danger btn-sm" onClick={() => handleDelete(m.id, m.full_name)}
+                              disabled={actingId === m.id} aria-label={`Archive ${m.full_name}`}
+                              title="Archive member">
+                              <Trash2 size={12}/>
+                            </button>
+                          </>
+                        )}
                       </div>
                     </td>
                   </tr>

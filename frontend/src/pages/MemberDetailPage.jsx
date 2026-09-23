@@ -1,17 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import API from '../utils/api';
-import { ArrowLeft, Edit2, Plus, Trash2, Save, X, CreditCard } from 'lucide-react';
+import API, { errorMessage } from '../utils/api';
+import { ArrowLeft, Edit2, Plus, Trash2, Save, X, CreditCard, AlertCircle, RefreshCw } from 'lucide-react';
 
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const fmt = n => '₦' + Number(n||0).toLocaleString('en-NG',{minimumFractionDigits:2});
 
 function Badge({ status }) {
-  return <span className={`badge badge-${status}`}>{status.charAt(0).toUpperCase()+status.slice(1)}</span>;
+  const s = status || 'pending';
+  return <span className={`badge badge-${s}`}>{s.charAt(0).toUpperCase()+s.slice(1)}</span>;
 }
 
 // Inline edit row for monthly dues
-function DueRow({ due, userId, onRefresh }) {
+function DueRow({ due, userId, onRefresh, onError }) {
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({ status: due.status, amount: due.amount, notes: due.notes||'' });
   const [saving, setSaving] = useState(false);
@@ -21,7 +22,12 @@ function DueRow({ due, userId, onRefresh }) {
     try {
       await API.put(`/records/dues/${userId}`, { due_month: due.due_month, due_year: due.due_year, ...form });
       onRefresh(); setEditing(false);
-    } catch { setSaving(false); }
+    } catch (err) {
+      // Surface save failures instead of silently re-enabling the button
+      // (audit C3).
+      setSaving(false);
+      onError?.('error', errorMessage(err, 'Failed to save due record.'));
+    }
   };
 
   if (editing) return (
@@ -38,8 +44,8 @@ function DueRow({ due, userId, onRefresh }) {
       <td><input value={form.notes} onChange={e=>setForm(f=>({...f,notes:e.target.value}))} placeholder="Notes…" style={{padding:'5px 8px'}}/></td>
       <td>
         <div style={{display:'flex',gap:5}}>
-          <button className="btn btn-primary btn-sm" onClick={save} disabled={saving}><Save size={12}/></button>
-          <button className="btn btn-secondary btn-sm" onClick={()=>setEditing(false)}><X size={12}/></button>
+          <button className="btn btn-primary btn-sm" onClick={save} disabled={saving} aria-label="Save due record"><Save size={12}/></button>
+          <button className="btn btn-secondary btn-sm" onClick={()=>setEditing(false)} aria-label="Cancel editing"><X size={12}/></button>
         </div>
       </td>
     </tr>
@@ -51,22 +57,22 @@ function DueRow({ due, userId, onRefresh }) {
       <td>{fmt(due.amount)}</td>
       <td><Badge status={due.status}/></td>
       <td style={{fontSize:12.5,color:'var(--slate-500)'}}>{due.notes||'—'}</td>
-      <td><button className="btn btn-outline btn-sm" onClick={()=>setEditing(true)}><Edit2 size={12}/></button></td>
+      <td><button className="btn btn-outline btn-sm" onClick={()=>setEditing(true)} aria-label="Edit due record"><Edit2 size={12}/></button></td>
     </tr>
   );
 }
 
 // Add due row
-function AddDueRow({ userId, onRefresh, onCancel }) {
+function AddDueRow({ userId, onRefresh, onCancel, onError }) {
   const [form, setForm] = useState({ due_month:'', due_year: new Date().getFullYear(), amount:2000, status:'pending', notes:'' });
   const [saving, setSaving] = useState(false);
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
 
   const save = async () => {
-    if (!form.due_month) return;
+    if (!form.due_month) { onError?.('error', 'Please select a month before saving.'); return; }
     setSaving(true);
     try { await API.put(`/records/dues/${userId}`, form); onRefresh(); onCancel(); }
-    catch { setSaving(false); }
+    catch (err) { setSaving(false); onError?.('error', errorMessage(err, 'Failed to save due record.')); }
   };
 
   return (
@@ -89,8 +95,8 @@ function AddDueRow({ userId, onRefresh, onCancel }) {
       <td><input value={form.notes} onChange={e=>set('notes',e.target.value)} placeholder="Notes…" style={{padding:'5px 8px'}}/></td>
       <td>
         <div style={{display:'flex',gap:5}}>
-          <button className="btn btn-primary btn-sm" onClick={save} disabled={saving}><Save size={12}/></button>
-          <button className="btn btn-secondary btn-sm" onClick={onCancel}><X size={12}/></button>
+          <button className="btn btn-primary btn-sm" onClick={save} disabled={saving} aria-label="Save new due record"><Save size={12}/></button>
+          <button className="btn btn-secondary btn-sm" onClick={onCancel} aria-label="Cancel"><X size={12}/></button>
         </div>
       </td>
     </tr>
@@ -108,13 +114,18 @@ export default function MemberDetailPage() {
   const [editForm, setEditForm] = useState({});
   const [regions, setRegions]   = useState([]);
   const [alert, setAlert] = useState(null);
+  const [loadError, setLoadError] = useState(null);
 
   const load = async () => {
     try {
       const res = await API.get(`/admin/members/${id}`);
       setData(res.data);
       setEditForm({ full_name: res.data.member.full_name, email: res.data.member.email, position: res.data.member.position||'', region_id: res.data.member.region_id });
-    } catch {}
+      setLoadError(null);
+    } catch (err) {
+      console.error('Load member error:', err);
+      setLoadError(errorMessage(err, 'Failed to load member data'));
+    }
     setLoading(false);
   };
 
@@ -124,26 +135,46 @@ export default function MemberDetailPage() {
 
   const saveMember = async () => {
     try { await API.put(`/admin/members/${id}`, editForm); setEditingMember(false); load(); showAlert('success','Profile updated.'); }
-    catch (err) { showAlert('error', err.response?.data?.error || 'Update failed'); }
+    catch (err) { showAlert('error', errorMessage(err, 'Update failed')); }
   };
 
   const deletePledge = async (type, pledgeId) => {
-    if (!confirm('Delete this pledge record?')) return;
+    if (!confirm('Delete this pledge record? This cannot be undone.')) return;
     try {
       await API.delete(`/records/pledges/${type}/${pledgeId}`);
       load(); showAlert('success','Pledge deleted.');
-    } catch { showAlert('error','Failed to delete.'); }
+    } catch (err) { showAlert('error', errorMessage(err, 'Failed to delete pledge.')); }
   };
 
   if (loading) return <div className="loading-container"><div className="spinner"/></div>;
-  if (!data)   return <div className="alert alert-error">Member not found.</div>;
+  if (loadError) return (
+    <div>
+      {/* Dead-end error state fixed (audit H2): retry + escape hatch. */}
+      <div className="alert alert-error" role="alert" style={{flexDirection:'column',alignItems:'flex-start',gap:12}}>
+        <span style={{display:'flex',alignItems:'center',gap:6}}>
+          <AlertCircle size={14}/>{loadError}
+        </span>
+        <div style={{display:'flex',gap:8}}>
+          <button className="btn btn-outline btn-sm" onClick={() => { setLoading(true); load(); }}>
+            <RefreshCw size={13}/> Try again
+          </button>
+          <button className="btn btn-secondary btn-sm" onClick={() => navigate('/admin/members')}>
+            <ArrowLeft size={13}/> Back to Members
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+  if (!data) return (
+    <div className="alert alert-error" role="alert">Member not found.</div>
+  );
 
   const { member, dues, program_pledges, other_pledges } = data;
   const initials = member.full_name.split(' ').slice(0,2).map(n=>n[0]).join('').toUpperCase();
 
   return (
     <div>
-      {alert && <div className={`alert alert-${alert.type}`}>{alert.msg}</div>}
+      {alert && <div className={`alert alert-${alert.type}`} role={alert.type === 'error' ? 'alert' : 'status'}>{alert.msg}</div>}
 
       <button className="btn btn-secondary" style={{marginBottom:18}} onClick={() => navigate('/admin/members')}>
         <ArrowLeft size={14}/> Back to Members
@@ -214,9 +245,9 @@ export default function MemberDetailPage() {
                 <table>
                   <thead><tr><th>Month / Year</th><th>Amount</th><th>Status</th><th>Notes</th><th>Edit</th></tr></thead>
                   <tbody>
-                    {addingDue && <AddDueRow userId={id} onRefresh={load} onCancel={()=>setAddingDue(false)}/>}
+                    {addingDue && <AddDueRow userId={id} onRefresh={load} onCancel={()=>setAddingDue(false)} onError={showAlert}/>}
                     {dues.length===0 && !addingDue && <tr><td colSpan={5} style={{textAlign:'center',padding:32,color:'var(--slate-400)'}}>No dues records yet</td></tr>}
-                    {dues.map(d => <DueRow key={d.id} due={d} userId={id} onRefresh={load}/>)}
+                    {dues.map(d => <DueRow key={d.id} due={d} userId={id} onRefresh={load} onError={showAlert}/>)}
                   </tbody>
                 </table>
               </div>
@@ -227,7 +258,7 @@ export default function MemberDetailPage() {
           {tab==='program' && (
             <>
               <div style={{marginBottom:12,display:'flex',justifyContent:'flex-end'}}>
-                <AddPledgeInline type="program" userId={id} onRefresh={load}/>
+                <AddPledgeInline type="program" userId={id} onRefresh={load} onError={showAlert}/>
               </div>
               <div className="table-wrapper">
                 <table>
@@ -236,7 +267,7 @@ export default function MemberDetailPage() {
                     {program_pledges.length===0 && <tr><td colSpan={5} style={{textAlign:'center',padding:32,color:'var(--slate-400)'}}>No program pledges yet</td></tr>}
                     {program_pledges.map(p => (
                       <PledgeRow key={p.id} pledge={p} type="program" userId={id} onRefresh={load}
-                        onDelete={()=>deletePledge('program',p.id)} nameField="program_name"/>
+                        onDelete={()=>deletePledge('program',p.id)} nameField="program_name" onError={showAlert}/>
                     ))}
                   </tbody>
                 </table>
@@ -248,7 +279,7 @@ export default function MemberDetailPage() {
           {tab==='other' && (
             <>
               <div style={{marginBottom:12,display:'flex',justifyContent:'flex-end'}}>
-                <AddPledgeInline type="other" userId={id} onRefresh={load}/>
+                <AddPledgeInline type="other" userId={id} onRefresh={load} onError={showAlert}/>
               </div>
               <div className="table-wrapper">
                 <table>
@@ -257,7 +288,7 @@ export default function MemberDetailPage() {
                     {other_pledges.length===0 && <tr><td colSpan={5} style={{textAlign:'center',padding:32,color:'var(--slate-400)'}}>No other pledges yet</td></tr>}
                     {other_pledges.map(p => (
                       <PledgeRow key={p.id} pledge={p} type="other" userId={id} onRefresh={load}
-                        onDelete={()=>deletePledge('other',p.id)} nameField="description"/>
+                        onDelete={()=>deletePledge('other',p.id)} nameField="description" onError={showAlert}/>
                     ))}
                   </tbody>
                 </table>
@@ -270,7 +301,7 @@ export default function MemberDetailPage() {
   );
 }
 
-function AddPledgeInline({ type, userId, onRefresh }) {
+function AddPledgeInline({ type, userId, onRefresh, onError }) {
   const [open, setOpen] = useState(false);
   const isProgram = type === 'program';
   const [form, setForm] = useState({ name:'', amount:0, status:'pending', date:'' });
@@ -278,6 +309,10 @@ function AddPledgeInline({ type, userId, onRefresh }) {
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
 
   const save = async () => {
+    if (!String(form.name).trim()) {
+      onError?.('error', isProgram ? 'Please enter a program name.' : 'Please enter a description.');
+      return;
+    }
     setSaving(true);
     try {
       const body = isProgram
@@ -285,14 +320,17 @@ function AddPledgeInline({ type, userId, onRefresh }) {
         : { description: form.name,  pledge_amount: form.amount, status: form.status, pledge_date: form.date };
       await API.post(`/records/pledges/${type}/${userId}`, body);
       onRefresh(); setOpen(false); setForm({name:'',amount:0,status:'pending',date:''});
-    } catch { setSaving(false); }
+    } catch (err) {
+      setSaving(false);
+      onError?.('error', errorMessage(err, 'Failed to add pledge.'));
+    }
   };
 
   if (!open) return <button className="btn btn-primary btn-sm" onClick={()=>setOpen(true)}><Plus size={13}/> Add {isProgram?'Program Pledge':'Other Pledge'}</button>;
 
   return (
     <div style={{background:'var(--green-50)',border:'1px solid var(--green-100)',borderRadius:8,padding:14,marginBottom:12,width:'100%'}}>
-      <div style={{display:'grid',gridTemplateColumns:'1fr 100px auto auto',gap:8,alignItems:'end'}}>
+      <div className="pledge-add-grid">
         <div>
           <label className="form-label">{isProgram?'Program Name':'Description'}</label>
           <input value={form.name} onChange={e=>set('name',e.target.value)} placeholder={isProgram?'e.g. Annual Dinner 2025':'e.g. Building Fund'}/>
@@ -320,7 +358,7 @@ function AddPledgeInline({ type, userId, onRefresh }) {
   );
 }
 
-function PledgeRow({ pledge, type, userId, onRefresh, onDelete, nameField }) {
+function PledgeRow({ pledge, type, userId, onRefresh, onDelete, nameField, onError }) {
   const [editing, setEditing] = useState(false);
   const isProgram = type === 'program';
   const [form, setForm] = useState({ name: pledge[nameField], amount: pledge.pledge_amount, status: pledge.status, date: pledge.pledge_date||'' });
@@ -335,7 +373,11 @@ function PledgeRow({ pledge, type, userId, onRefresh, onDelete, nameField }) {
         : { description: form.name,  pledge_amount: form.amount, status: form.status, pledge_date: form.date };
       await API.put(`/records/pledges/${type}/${pledge.id}`, body);
       onRefresh(); setEditing(false);
-    } catch { setSaving(false); }
+    } catch (err) {
+      // Surface save failures instead of failing silently (audit C3).
+      setSaving(false);
+      onError?.('error', errorMessage(err, 'Failed to save pledge.'));
+    }
   };
 
   if (editing) return (
@@ -347,8 +389,8 @@ function PledgeRow({ pledge, type, userId, onRefresh, onDelete, nameField }) {
       </select></td>
       <td><input type="date" value={form.date} onChange={e=>set('date',e.target.value)} style={{padding:'5px 8px',width:140}}/></td>
       <td><div style={{display:'flex',gap:5}}>
-        <button className="btn btn-primary btn-sm" onClick={save} disabled={saving}><Save size={12}/></button>
-        <button className="btn btn-secondary btn-sm" onClick={()=>setEditing(false)}><X size={12}/></button>
+        <button className="btn btn-primary btn-sm" onClick={save} disabled={saving} aria-label="Save pledge"><Save size={12}/></button>
+        <button className="btn btn-secondary btn-sm" onClick={()=>setEditing(false)} aria-label="Cancel editing"><X size={12}/></button>
       </div></td>
     </tr>
   );
@@ -360,8 +402,8 @@ function PledgeRow({ pledge, type, userId, onRefresh, onDelete, nameField }) {
       <td><span className={`badge badge-${pledge.status}`}>{pledge.status.charAt(0).toUpperCase()+pledge.status.slice(1)}</span></td>
       <td style={{fontSize:12.5,color:'var(--slate-400)'}}>{pledge.pledge_date ? new Date(pledge.pledge_date).toLocaleDateString('en-NG') : '—'}</td>
       <td><div style={{display:'flex',gap:5}}>
-        <button className="btn btn-outline btn-sm" onClick={()=>setEditing(true)}><Edit2 size={12}/></button>
-        <button className="btn btn-danger btn-sm" onClick={onDelete}><Trash2 size={12}/></button>
+        <button className="btn btn-outline btn-sm" onClick={()=>setEditing(true)} aria-label="Edit pledge"><Edit2 size={12}/></button>
+        <button className="btn btn-danger btn-sm" onClick={onDelete} aria-label="Delete pledge"><Trash2 size={12}/></button>
       </div></td>
     </tr>
   );

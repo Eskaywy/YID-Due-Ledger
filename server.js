@@ -11,12 +11,27 @@ const { initDatabase } = require('./db');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Behind Vercel / reverse proxies so rate limits see the real client IP.
+app.set('trust proxy', 1);
+
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors({ origin: process.env.CLIENT_URL || 'http://localhost:5173', credentials: true }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-app.use('/api/', rateLimit({ windowMs: 15 * 60 * 1000, max: 300 }));
-app.use('/api/auth/', rateLimit({ windowMs: 15 * 60 * 1000, max: 20 }));
+
+// Friendly JSON body on 429s so the frontend can surface it (audit H4).
+const limitOpts = {
+  windowMs: 15 * 60 * 1000,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests. Please wait a moment and try again.' },
+};
+// Strict cap only on login attempts. Everything else under /api/auth
+// (including /auth/me, fired on every page load) shares a generous bucket so
+// refreshes can't lock users out (audit H4).
+app.use('/api/auth/login', rateLimit({ ...limitOpts, max: 20 }));
+app.use('/api/', rateLimit({ ...limitOpts, max: 300 }));
+app.use('/api/auth/', rateLimit({ ...limitOpts, max: 300 }));
 
 app.use(cookieParser());
 

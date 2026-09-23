@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import API from '../utils/api';
-import { Users, CheckCircle, AlertTriangle, Wallet, Upload, ChevronRight, Activity, MapPin } from 'lucide-react';
+import API, { errorMessage } from '../utils/api';
+import { Users, CheckCircle, AlertTriangle, Wallet, Upload, ChevronRight, Activity, MapPin, RefreshCw } from 'lucide-react';
 
 const fmt = n => '₦' + Number(n||0).toLocaleString('en-NG', { minimumFractionDigits: 2 });
 
@@ -15,11 +15,35 @@ const ACTION_LABELS = {
 export default function AdminDashboard() {
   const [stats, setStats]   = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError]   = useState(null);
+  const [reloadKey, setReloadKey] = useState(0);
   const navigate = useNavigate();
 
-  useEffect(() => { API.get('/admin/stats').then(r => setStats(r.data)).finally(() => setLoading(false)); }, []);
+  // Failures now show an explicit error + retry instead of silently rendering
+  // zeros as real data (audit H1).
+  const load = useCallback(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    API.get('/admin/stats')
+      .then(r => { if (!cancelled) setStats(r.data); })
+      .catch(err => { if (!cancelled) setError(errorMessage(err, 'Failed to load dashboard statistics.')); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
 
-  if (loading) return <div className="loading-container"><div className="spinner"/></div>;
+  useEffect(() => load(), [load, reloadKey]);
+
+  if (loading) return <div className="loading-container" role="status" aria-label="Loading dashboard"><div className="spinner"/></div>;
+
+  if (error) return (
+    <div className="alert alert-error" role="alert" style={{flexDirection:'column',alignItems:'flex-start',gap:12}}>
+      <span>{error}</span>
+      <button className="btn btn-outline btn-sm" onClick={() => setReloadKey(k => k + 1)}>
+        <RefreshCw size={13}/> Try again
+      </button>
+    </div>
+  );
 
   return (
     <div>
@@ -31,7 +55,7 @@ export default function AdminDashboard() {
         <div className="stat-card"><div className="stat-icon gold"><Wallet size={19}/></div><div><div className="stat-value">{fmt(stats?.total_collected)}</div><div className="stat-label">Total Dues Collected</div></div></div>
       </div>
 
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:18,marginBottom:18}}>
+      <div className="grid-2">
         {/* Quick actions */}
         <div className="card">
           <div className="card-header"><span className="card-title">Quick Actions</span></div>

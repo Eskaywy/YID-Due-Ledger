@@ -1,16 +1,23 @@
 import React, { useState } from 'react';
-import API from '../utils/api';
+import API, { errorMessage } from '../utils/api';
 import { Upload, FileText, CheckCircle, AlertCircle, Download } from 'lucide-react';
 
 export default function BatchUploadPage() {
   const [file, setFile]       = useState(null);
+  const [fileError, setFileError] = useState('');
   const [result, setResult]   = useState(null);
   const [loading, setLoading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
 
   const handleFile = f => {
-    const ext = f?.name.split('.').pop().toLowerCase();
-    if (!['csv','xlsx','xls'].includes(ext)) { alert('Please upload a CSV or Excel (.xlsx/.xls) file.'); return; }
+    const ext = f?.name?.split('.').pop()?.toLowerCase();
+    if (!f || !['csv','xlsx','xls'].includes(ext)) {
+      // Inline, screen-reader-visible message instead of a native alert()
+      // (audit M12 / L10).
+      setFileError('Please choose a CSV or Excel (.xlsx/.xls) file.');
+      return;
+    }
+    setFileError('');
     setFile(f); setResult(null);
   };
 
@@ -20,15 +27,19 @@ export default function BatchUploadPage() {
   };
 
   const handleUpload = async () => {
-    if (!file) return;
+    if (!file || loading) return;
     setLoading(true);
     const fd = new FormData();
     fd.append('file', file);
     try {
-      const res = await API.post('/admin/batch-upload', fd, { headers:{'Content-Type':'multipart/form-data'} });
+      // 60s budget for uploads — the global 15s axios timeout would kill
+      // larger files on slow connections (audit F13).
+      const res = await API.post('/admin/batch-upload', fd, {
+        headers:{'Content-Type':'multipart/form-data'}, timeout: 60000,
+      });
       setResult(res.data);
     } catch (err) {
-      setResult({ error: err.response?.data?.error || 'Upload failed' });
+      setResult({ error: errorMessage(err, 'Upload failed.') });
     } finally { setLoading(false); }
   };
 
@@ -55,17 +66,23 @@ LGS-MED-202506-0002,adewale@drdp.ng,,,,,Annual Dinner 2025,5000,paid,2025-03-15`
             Use the Member ID (<code>user_id</code>) or email to identify members.
           </div>
 
-          {/* Drop zone */}
+          {/* Drop zone — keyboard accessible (audit M5/H7) */}
           <div
+            role="button"
+            tabIndex={0}
+            aria-label="Upload a CSV or Excel file. Press Enter to browse."
             onDragOver={e=>{e.preventDefault();setDragOver(true)}}
             onDragLeave={()=>setDragOver(false)}
             onDrop={handleDrop}
             onClick={() => document.getElementById('fileInput').click()}
+            onKeyDown={e => {
+              if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); document.getElementById('fileInput').click(); }
+            }}
             style={{
               border:`2px dashed ${dragOver ? 'var(--green-500)' : 'var(--slate-200)'}`,
               borderRadius:10, padding:'40px 24px', textAlign:'center', cursor:'pointer',
               background: dragOver ? 'var(--green-50)' : 'var(--slate-50)',
-              transition:'all .15s', marginBottom:18,
+              transition:'all .15s', marginBottom: fileError ? 8 : 18,
             }}>
             <input id="fileInput" type="file" accept=".csv,.xlsx,.xls" style={{display:'none'}}
               onChange={e => handleFile(e.target.files[0])}/>
@@ -84,7 +101,14 @@ LGS-MED-202506-0002,adewale@drdp.ng,,,,,Annual Dinner 2025,5000,paid,2025-03-15`
             )}
           </div>
 
-          <button className="btn btn-primary" style={{width:'100%'}} onClick={handleUpload} disabled={!file||loading}>
+          {fileError && (
+            <div className="alert alert-error" role="alert" style={{marginBottom:14}}>
+              <AlertCircle size={15}/> {fileError}
+            </div>
+          )}
+
+          <button className="btn btn-primary" style={{width:'100%'}} onClick={handleUpload} disabled={!file||loading}
+            aria-busy={loading}>
             <Upload size={15}/> {loading ? 'Uploading…' : 'Upload & Process'}
           </button>
         </div>
@@ -96,10 +120,10 @@ LGS-MED-202506-0002,adewale@drdp.ng,,,,,Annual Dinner 2025,5000,paid,2025-03-15`
           <div className="card-header"><span className="card-title">Upload Results</span></div>
           <div className="card-body">
             {result.error ? (
-              <div className="alert alert-error"><AlertCircle size={16}/> {result.error}</div>
+              <div className="alert alert-error" role="alert"><AlertCircle size={16}/> {result.error}</div>
             ) : (
               <>
-                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:14,marginBottom:20}}>
+                <div className="upload-stats">
                   <div style={{background:'var(--slate-50)',borderRadius:8,padding:'14px 16px',textAlign:'center'}}>
                     <div style={{fontSize:24,fontWeight:700,color:'var(--slate-800)',fontFamily:'Space Grotesk,sans-serif'}}>{result.processed}</div>
                     <div style={{fontSize:12.5,color:'var(--slate-400)',marginTop:3}}>Rows Processed</div>
@@ -129,8 +153,15 @@ LGS-MED-202506-0002,adewale@drdp.ng,,,,,Annual Dinner 2025,5000,paid,2025-03-15`
                   </div>
                 )}
 
+                {result.errors?.length > 0 && result.successes > 0 && (
+                  <div className="alert alert-info" role="status" style={{marginTop:14,marginBottom:0}}>
+                    {result.successes} row(s) were saved successfully. The rows listed above were skipped —
+                    correct them and upload again. Already-saved rows are not rolled back.
+                  </div>
+                )}
+
                 {result.errors?.length === 0 && (
-                  <div className="alert alert-success"><CheckCircle size={15}/> All records imported successfully!</div>
+                  <div className="alert alert-success" role="status"><CheckCircle size={15}/> All records imported successfully!</div>
                 )}
               </>
             )}
