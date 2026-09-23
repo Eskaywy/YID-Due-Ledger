@@ -46,3 +46,5 @@ data/*.sqlite
 
 # Supabase service role key must NEVER be committed — it lives in env vars only
 
+.vercel
+.env*
