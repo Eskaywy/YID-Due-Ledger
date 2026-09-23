@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sign In ΓÇö OAuth ΓÇö YID Due Ledger</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #0f172a; color: #e2e8f0; font-family: 'Inter', sans-serif; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 16px; }
+.consent-card { background: #1e293b; border: 1px solid #334155; border-radius: 14px; width: 100%; max-width: 900px; box-shadow: 0 20px 60px rgba(0,0,0,.4); }
+.consent-header { display: flex; align-items: center; gap: 12px; padding: 20px 24px; border-bottom: 1px solid #334155; }
+.app-logo { width: 40px; height: 40px; background: linear-gradient(135deg,#22c55e,#16a34a); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 700; color: #fff; letter-spacing: .5px; }
+.app-title { font-size: 18px; font-weight: 700; color: #fff; font-family: 'Space Grotesk', sans-serif; }
+.consent-body { display: flex; gap: 24px; padding: 24px; }
+@media (max-width: 700px) { .consent-body { flex-direction: column; gap: 16px; padding: 20px; } }
+.left-col { flex: 1; min-width: 0; }
+.right-col { flex: 0 0 320px; display: flex; flex-direction: column; gap: 16px; }
+@media (max-width: 700px) { .right-col { flex: 0 0 auto; } }
+.section-title { font-size: 16px; font-weight: 600; color: #f1f5f9; margin-bottom: 8px; }
+.section-desc { color: #94a3b8; font-size: 13px; line-height: 1.5; margin-bottom: 16px; }
+.client-card { background: #0f172a; border: 1px solid #334155; border-radius: 10px; padding: 16px; }
+.client-header { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.client-logo { width: 36px; height: 36px; background: linear-gradient(135deg,#22c55e,#16a34a); border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 700; color: #fff; }
+.client-name { font-size: 15px; font-weight: 600; color: #f1f5f9; }
+.client-desc { color: #94a3b8; font-size: 12px; line-height: 1.4; }
+.scope-list { display: flex; flex-direction: column; gap: 10px; }
+.scope-row { display: flex; align-items: flex-start; gap: 10px; }
+.scope-icon { width: 32px; height: 32px; background: #3b82f6; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 700; color: #fff; flex-shrink: 0; }
+.scope-col { flex: 1; }
+.scope-name { font-size: 13px; font-weight: 600; color: #f1f5f9; }
+.scope-desc { color: #94a3b8; font-size: 12px; line-height: 1.4; }
+.scope-pills { display: flex; flex-wrap: gap: 6px; }
+.scope-pill { background: rgba(14,165,233,.15); border: 1px solid rgba(14,165,233,.3); border-radius: 999px; padding: 4px 10px; font-size: 12px; font-weight: 500; color: #38bdf8; }
+.form-group { margin-bottom: 16px; }
+.form-label { display: block; font-size: 12px; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
+.form-input { width: 100%; padding: 10px 12px; background: #0f172a; border: 1px solid #334155; border-radius: 8px; color: #e2e8f0; font-size: 14px; outline: none; }
+.form-input:focus { border-color: #22c55e; }
+.btn { padding: 12px 20px; border-radius: 8px; font-weight: 600; cursor: pointer; border: none; font-size: 15px; display: inline-flex; align-items: center; gap: 8px; }
+.btn:hover { opacity: .9; }
+.btn-lg { width: 100%; }
+.btn-primary { background: #22c55e; color: #fff; }
+.btn-approve { background: #22c55e; color: #fff; flex: 1; }
+.btn-deny { background: #ef4444; color: #fff; flex: 1; }
+.actions-row { display: flex; gap: 12px; margin-top: 8px; }
+.error-banner { background: #fef2f2; border: 1px solid #fca5a5; color: #991b1b; border-radius: 8px; padding: 10px 14px; font-size: 13px; margin-bottom: 16px; }
+.demo-creds { background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 14px; margin-top: 16px; }
+.demo-creds-title { font-size: 11px; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 8px; }
+.demo-cred-row { display: flex; align-items: center; gap: 6px; font-size: 12px; margin-bottom: 4px; }
+.client-tag { font-size: 11px; color: #22c55e; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; margin-top: 2px; }
+.user-signed-in { display: flex; align-items: center; gap: 8px; padding-top: 8px; border-top: 1px solid #334155; margin-top: 16px; }
+.user-avatar { width: 28px; height: 28px; background: linear-gradient(135deg,#22c55e,#16a34a); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; color: #fff; flex-shrink: 0; }
+.user-name { font-size: 13px; font-weight: 600; color: #f1f5f9; }
+.user-email { font-size: 12px; color: #94a3b8; }
+</style>
+</head>
+<body>
+<div class="consent-card">
+<div class="consent-header"><div class="app-logo">YD</div><span class="app-title">YID Due Ledger</span></div>
+<div class="consent-body">
+<div class="left-col">
+<div class="login-section"><h2 class="section-title">Sign in to continue</h2><p class="section-desc">You're signing into "YID Due Ledger". Enter your credentials to proceed.</p><form method="POST" action="/oauth/consent"><input type="hidden" name="action" value="login"><input type="hidden" name="client_id" value="yid-web-app"><input type="hidden" name="redirect_uri" value="http://localhost:3000/oauth/callback"><input type="hidden" name="scope" value="openid profile email member_data"><input type="hidden" name="state" value="test123"><div class="form-group"><label class="form-label">Email Address</label><input type="email" name="email" placeholder="you@example.com" required autocomplete="email" class="form-input"></div><div class="form-group"><label class="form-label">Password</label><input type="password" name="password" placeholder="Enter your password" required autocomplete="current-password" class="form-input"></div><button type="submit" class="btn btn-primary btn-lg">Sign In &amp; Continue</button></form><div class="demo-creds"><div class="demo-creds-title">Demo Credentials</div><div class="demo-cred-row"><code>superadmin@drdp.ng</code> / <code>Admin@2025</code></div><div class="demo-cred-row"><code>adewale@drdp.ng</code> / <code>Member@2025</code></div></div></div>
+<div class="client-card"><div class="client-header"><div class="client-logo">YD</div><div><div class="client-name">YID Due Ledger</div><div class="client-tag">OAuth Client</div></div></div><div class="client-desc">Dues Management Platform ΓÇö Lagos & South-West Region Pilot</div></div><h2 class="section-title">Permissions Requested</h2><p class="section-desc">After signing in, YID Due Ledger will ask you to grant access to:</p><div class="scope-pills"><div class="scope-pill"><span class="scope-pill-dot"></span>OpenID Connect</div><div class="scope-pill"><span class="scope-pill-dot"></span>Profile</div><div class="scope-pill"><span class="scope-pill-dot"></span>Email Address</div><div class="scope-pill"><span class="scope-pill-dot"></span>Member Data</div></div>
+</div>
+<div class="right-col">
+<div class="client-card"><div class="client-header"><div class="client-logo">YD</div><div><div class="client-name">YID Due Ledger</div><div class="client-tag">OAuth Client</div></div></div><div class="client-desc">Dues Management Platform ΓÇö Lagos & South-West Region Pilot</div></div>
+</div>
+</div>
+</div>
+</body>
+</html>

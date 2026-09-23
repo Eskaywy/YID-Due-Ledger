@@ -1,19 +1,20 @@
-const { db } = require('../db');
+const { supabase } = require('../supabaseAdmin');
 const { v4: uuidv4 } = require('uuid');
 
 const auditLog = async (actorId, action, targetTable, targetId, beforeValue, afterValue) => {
   try {
     const auditId = uuidv4();
-    await db.collection('auditLogs').doc(auditId).set({
+    const { error } = await supabase.from('audit_logs').insert({
       id: auditId,
-      actorId,
+      actor_id: actorId,
       action,
-      targetTable,
-      targetId,
-      beforeValue: beforeValue ? JSON.stringify(beforeValue) : null,
-      afterValue: afterValue ? JSON.stringify(afterValue) : null,
-      createdAt: new Date().toISOString(),
+      target_table: targetTable,
+      target_id: targetId,
+      before_value: beforeValue ? JSON.stringify(beforeValue) : null,
+      after_value: afterValue ? JSON.stringify(afterValue) : null,
+      created_at: new Date().toISOString(),
     });
+    if (error) throw error;
   } catch (err) {
     console.error('Audit log error:', err);
   }

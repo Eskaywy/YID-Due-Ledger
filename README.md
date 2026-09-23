@@ -31,9 +31,7 @@ Members verify their own records; the Super Admin manages everything.
 
 ### Prerequisites
 - Node.js 20+ (recommended; Node 18 also works)
-- [Firebase CLI](https://firebase.google.com/docs/cli) (`npm install -g firebase-tools`)
-- A [Firebase project](https://console.firebase.google.com/) with Cloud Firestore and Authentication enabled
-- A service-account key JSON file for local development (never commit it)
+- A [Supabase](https://supabase.com/) project (free tier works)
 
 ### Install & Run
 
@@ -41,14 +39,20 @@ Members verify their own records; the Super Admin manages everything.
 # 1. Install backend dependencies
 npm install
 
-# 2. Install & build frontend
+# 2. Create the database schema (one time)
+#    Supabase Dashboard → SQL Editor → paste supabase/schema.sql → Run
+
+# 3. Configure environment (copy .env.example to .env and fill it in)
+#    SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, JWT_SECRET, CLIENT_URL
+
+# 4. Install & build frontend
 npm run build
 
-# 3. Start the server (serves both API + frontend in production mode)
+# 5. Start the server (serves both API + frontend in production mode)
 NODE_ENV=production node server.js
 ```
 
-Open http://localhost:3001
+Open http://localhost:3000
 
 ### Development (hot reload)
 
@@ -56,7 +60,7 @@ Open http://localhost:3001
 # Terminal 1 — Backend
 node server.js
 
-# Terminal 2 — Frontend dev server (proxies /api to :3001)
+# Terminal 2 — Frontend dev server (proxies /api to :3000)
 cd frontend && npm run dev
 ```
 
@@ -69,14 +73,12 @@ Frontend dev server: http://localhost:5173
 ```
 yid-due-ledger/
 ├── package.json              # Backend deps + scripts (npm run build/deploy)
-├── server.js                 # Express app entry point (exportable for Functions)
-├── db.js                     # Firestore DB init + seed data
-├── firebaseAdmin.js          # Firebase Admin SDK init (local + Cloud Functions)
-├── firebase.json             # Hosting + Functions + Firestore config
-├── firestore.indexes.json    # Composite Firestore indexes
-├── .firebaserc               # Firebase project alias (yid-due-ledger)
+├── server.js                 # Express app entry point (exportable for Vercel)
+├── supabaseAdmin.js          # Supabase client (service role, server-side only)
+├── supabase/
+│   └── schema.sql            # Postgres schema + RPC functions (run once in SQL Editor)
+├── db.js                     # DB init + seed data (Supabase)
 ├── .env.example              # Template for environment variables
-├── serviceAccountKey.json    # Service account key for local dev (gitignored)
 ├── middleware/
 │   ├── auth.js               # JWT auth + requireSuperAdmin guard
 │   └── audit.js              # Audit log writer
@@ -85,17 +87,12 @@ yid-due-ledger/
 │   ├── members.js            # Member self-service: GET /my/dues, /pledges, /summary
 │   ├── admin.js              # Super Admin CRUD, batch upload, export
 │   └── records.js            # Individual dues & pledge CRUD
-├── functions/                # Firebase Cloud Functions (Express backend)
-│   ├── package.json
-│   └── index.js              # onRequest(app) — wraps server.js
+├── api/
+│   └── index.js              # Vercel serverless function wrapper for server.js
 ├── scripts/                  # Utility / admin scripts
-│   ├── preflight-check.js    # Verify files, modules, and live Firebase conn
-│   ├── preview-check.js      # End-to-end dev-server + API check
-│   ├── create-indexes.js     # Create Firestore composite indexes via REST API
-│   └── verify-queries.js     # Verify the indexes work with real queries
+│   └── preview-check.js      # End-to-end dev-server + API check
 ├── uploads/                  # Temporary batch-upload files (gitignored)
-│   └── .gitkeep
-├── data/                     # Legacy data dir (now Firestore-backed)
+├── data/                     # Legacy data dir (now Supabase-backed)
 └── frontend/                 # React + Vite SPA
     ├── package.json
     ├── vite.config.js
@@ -128,7 +125,6 @@ yid-due-ledger/
         │   └── ProfilePage.jsx       # Own profile + change password
         └── utils/
             ├── api.js                # Axios client (env-aware base URL)
-            └── firebase.js           # Firebase Web SDK init (client-side)
 ```
 
 ---
@@ -225,63 +221,92 @@ IDs are auto-generated and sequential per region + department + month.
 
 | Variable     | Default                              | Description          |
 |--------------|--------------------------------------|----------------------|
-| PORT         | 3001                                 | Server port          |
+| PORT         | 3000                                 | Server port (includes OAuth `/oauth/*` endpoints) |
 | JWT_SECRET   | yid-due-ledger-secret-key-change-in-production | **Change in prod!**  |
 | CLIENT_URL   | http://localhost:5173                | CORS allowed origin  |
 | NODE_ENV     | (unset)                              | Set to `production`  |
 
 ---
 
-## Deployment
+## OAuth 2.0 Authorization Server
 
-### Option A — Firebase Hosting (recommended)
+The server includes a built-in OAuth 2.0 / OpenID Connect authorization server on the same port (`/oauth/*` endpoints). It provides a complete authorization-code flow with a consent screen, suitable for development and testing.
 
-The project is set up for a single-command Firebase deploy that serves the
-static frontend via **Firebase Hosting** and the Express API via
-**Cloud Functions** (rewritten from `/api/*`).
+### Endpoints
 
-#### One-time setup
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/oauth/consent` | Consent screen — shows login form if not authenticated, or client card + requested scopes + Allow/Deny buttons if authenticated |
+| `POST` | `/oauth/consent` | Handles login, approve, or deny actions |
+| `POST` | `/oauth/login` | Programmatic login — returns JWT access token + user info (JSON API) |
+| `POST` | `/oauth/token` | Exchange authorization code for access token (standard OAuth token endpoint) |
+| `GET` | `/oauth/userinfo` | Get user info — requires `Authorization: Bearer <token>` header |
+| `GET` | `/oauth/callback` | Demo callback page — shows token + user info after code exchange (end-to-end testing) |
+| `GET` | `/oauth/authorize` | OAuth authorize endpoint — validates client, redirects to consent |
+| `GET` | `/oauth/.well-known/openid-configuration` | OIDC discovery document |
+| `GET` | `/oauth/logout` | Clears the `oauth_token` session cookie |
 
-```bash
-# Install the Functions dependencies locally
-npm run init:functions
+### Demo Clients (in-memory)
 
-# Log in to Firebase and select your project
-firebase login
-firebase use yid-due-ledger
-```
+| Client ID | Redirect URI |
+|-----------|-------------|
+| `yid-web-app` | `http://localhost:3000/oauth/callback` |
+| `yid-mobile-app` | `http://localhost:3000/oauth/callback` |
 
-#### Deploy
+### Demo Users (in-memory, bcrypt hashed at startup)
 
-```bash
-# Build frontend + deploy hosting + functions + Firestore indexes
-npm run build
-npm run deploy       # or: firebase deploy
-```
+| Email | Password | Role |
+|-------|----------|------|
+| `superadmin@drdp.ng` | `Admin@2025` | `super_admin` |
+| `adewale@drdp.ng` | `Member@2025` | `member` |
 
-To deploy only specific pieces:
-
-```bash
-npm run deploy:hosting    # frontend only
-npm run deploy:functions  # backend API only
-npm run deploy:indexes    # Firestore composite indexes
-```
-
-> **Note**: `serviceAccountKey.json` is **not** needed in Cloud Functions —
-> the runtime provides Application Default Credentials automatically.
-
-#### Useful scripts
+### Quick Test
 
 ```bash
-npm run scripts:preflight            # verify files + live Firebase connection
-npm run scripts:create-indexes       # create Firestore composite indexes
-npm run scripts:verify               # verify indexes work with real queries
-npm run scripts:preview              # end-to-end dev-server + API check
+# 1. Login (programmatic)
+curl -X POST http://localhost:3000/oauth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"superadmin@drdp.ng","password":"Admin@2025"}'
+
+# 2. Use the returned access_token to call userinfo
+curl http://localhost:3000/oauth/userinfo \
+  -H "Authorization: Bearer <access_token>"
+
+# 3. Consent flow (browser-based)
+open http://localhost:3000/oauth/consent
+# → Login with demo credentials → Approve → callback shows access token
 ```
+
+### OIDC Discovery
+
+```bash
+curl http://localhost:3000/oauth/.well-known/openid-configuration
+```
+
+Returns a valid OpenID Connect discovery document with `authorization_endpoint`, `token_endpoint`, `userinfo_endpoint`, and supported scopes (`openid`, `profile`, `email`, `member_data`).
 
 ---
 
-### Option B — Vercel
+## Deployment
+
+### Option A — Self-hosted (Node server)
+
+The Express app serves both the API (`/api/*`) and the built frontend
+(`frontend/dist`) from a single Node process:
+
+```bash
+# 1. Create the schema in Supabase (one time)
+#    Supabase Dashboard → SQL Editor → paste supabase/schema.sql → Run
+
+# 2. Configure environment (copy .env.example to .env and fill it in)
+#    SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, JWT_SECRET, CLIENT_URL
+
+# 3. Build the frontend and start the server
+npm run build
+npm start
+```
+
+### Option B — Vercel (recommended)
 
 The project can also be deployed to [Vercel](https://vercel.com/) as a static frontend + serverless API. Vercel builds the Vite frontend automatically and deploys `api/index.js` as a serverless function.
 
@@ -297,12 +322,14 @@ The project can also be deployed to [Vercel](https://vercel.com/) as a static fr
 4. Add the following **Environment Variables** in the Vercel project settings:
    | Variable | Value |
    |----------|-------|
+   | `SUPABASE_URL` | your Supabase project URL (Project Settings → API) |
+   | `SUPABASE_SERVICE_ROLE_KEY` | your Supabase service_role secret (keep secret!) |
    | `JWT_SECRET` | your production secret (use the same value as locally) |
    | `CLIENT_URL` | your Vercel deployment URL (e.g. `https://yid-due-ledger.vercel.app`) |
-   | `PORT` | `3001` (may be ignored by Vercel; keep it anyway) |
    | `NODE_ENV` | `production` |
 
-   > **Note**: `serviceAccountKey.json` is **not** needed in Vercel. `firebaseAdmin.js` detects `process.env.VERCEL` and uses Application Default Credentials instead.
+   > **Note**: no key files are needed on Vercel — the Supabase credentials
+   > come exclusively from these environment variables.
 
 5. Click **Deploy**.
 
@@ -332,16 +359,14 @@ vercel                 # or: npm run deploy:vercel:preview
 
 ## How to choose
 
-| | Firebase | Vercel |
-|--|----------|--------|
-| Frontend hosting | Firebase Hosting (CDN) | Vercel Edge Network |
-| Backend (API) | Cloud Functions (Node.js) | Vercel Serverless Functions |
-| Database | Firestore (same for both) | Firestore (same for both) |
-| Auth | Firebase Auth (same for both) | Firebase Auth (same for both) |
-| Cold starts | ~1-2s (gen 2 functions) | ~100-500ms (Vercel is faster) |
-| Free tier | 10GB/mo bandwidth, 50k reads/day | 100GB/mo bandwidth, 100k invocations/mo |
-| Best for | Firebase-native projects, easy setup | Faster cold starts, broader toolchain |
+| | Self-hosted (Node) | Vercel |
+|--|--------------------|--------|
+| Frontend hosting | Express serves `frontend/dist` | Vercel Edge Network (CDN) |
+| Backend (API) | Same Node process | Vercel Serverless Functions |
+| Database | Supabase (Postgres) — same for both | Supabase (Postgres) — same for both |
+| Cold starts | none (long-running process) | ~100-500ms |
+| Best for | full control, always-on server | zero-ops deploys, global CDN |
 
-Both options use the **same** Firestore database and Firebase Auth —
+Both options use the **same** Supabase database —
 deploying to either does not affect your data. You can even deploy to
-both simultaneously (e.g. staging on Vercel, production on Firebase).
+both simultaneously (e.g. preview on Vercel, production self-hosted).

@@ -7,124 +7,98 @@ const { parse } = require('csv-parse/sync');
 const XLSX = require('xlsx');
 const path = require('path');
 const fs = require('fs');
-const { db, generateUserId } = require('../db');
+const { supabase, generateUserId } = require('../db');
 const { authenticate, requireSuperAdmin } = require('../middleware/auth');
 const { auditLog } = require('../middleware/audit');
 
 const router = express.Router();
 const upload = multer({ dest: 'uploads/', limits: { fileSize: 5 * 1024 * 1024 } });
 
-// Map Firestore camelCase docs to the snake_case API shape the frontend expects
-const mapDue = (d = {}) => ({
-  id: d.id,
-  user_id: d.userId ?? null,
-  due_month: d.dueMonth ?? null,
-  due_year: d.dueYear ?? null,
-  amount: d.amount ?? 0,
-  status: d.status ?? 'pending',
-  notes: d.notes ?? null,
-  updated_by: d.updatedBy ?? null,
-  created_at: d.createdAt ?? null,
-  updated_at: d.updatedAt ?? null,
-});
-
-const mapProgramPledge = (p = {}) => ({
-  id: p.id,
-  user_id: p.userId ?? null,
-  program_name: p.programName ?? null,
-  pledge_amount: p.pledgeAmount ?? 0,
-  status: p.status ?? 'pending',
-  pledge_date: p.pledgeDate ?? null,
-  notes: p.notes ?? null,
-  created_at: p.createdAt ?? null,
-  updated_at: p.updatedAt ?? null,
-});
-
-const mapOtherPledge = (o = {}) => ({
-  id: o.id,
-  user_id: o.userId ?? null,
-  description: o.description ?? null,
-  pledge_amount: o.pledgeAmount ?? 0,
-  status: o.status ?? 'pending',
-  pledge_date: o.pledgeDate ?? null,
-  notes: o.notes ?? null,
-  created_at: o.createdAt ?? null,
-  updated_at: o.updatedAt ?? null,
-});
-
 const mapMember = (m = {}) => ({
   id: m.id,
-  user_id_code: m.userIdCode ?? null,
-  full_name: m.fullName ?? null,
+  user_id_code: m.user_id_code ?? null,
+  full_name: m.full_name ?? null,
   email: m.email ?? null,
   position: m.position ?? null,
-  dept_code: m.deptCode ?? null,
-  region_id: m.regionId ?? null,
+  dept_code: m.dept_code ?? null,
+  region_id: m.region_id ?? null,
   role: m.role ?? 'member',
-  is_active: m.isActive ?? true,
-  created_at: m.createdAt ?? null,
-  updated_at: m.updatedAt ?? null,
+  is_active: m.is_active ?? true,
+  created_at: m.created_at ?? null,
+  updated_at: m.updated_at ?? null,
 });
 
 // Dashboard stats
 router.get('/stats', authenticate, requireSuperAdmin, async (req, res) => {
   try {
-    const membersSnapshot = await db.collection('users').where('role', '==', 'member').where('isActive', '==', true).get();
-    const totalMembers = membersSnapshot.size;
+    const [membersRes, duesRes, logsRes, regionsRes] = await Promise.all([
+      supabase.from('users').select('id, region_id').eq('role', 'member').eq('is_active', true),
+      supabase.from('monthly_dues').select('user_id, amount, status'),
+      supabase.from('audit_logs').select('*').order('created_at', { ascending: false }).limit(10),
+      supabase.from('regions').select('*').order('name'),
+    ]);
+    if (membersRes.error || duesRes.error || logsRes.error || regionsRes.error) {
+      throw membersRes.error || duesRes.error || logsRes.error || regionsRes.error;
+    }
 
-    const duesSnapshot = await db.collection('monthlyDues').get();
+    const members = membersRes.data || [];
+    const totalMembers = members.length;
+
     let paidMembersSet = new Set(), arrearsMembersSet = new Set(), totalCollected = 0;
-    duesSnapshot.forEach(doc => {
-      const due = doc.data();
+    for (const due of duesRes.data || []) {
       if (due.status === 'paid') {
-        totalCollected += due.amount;
-        paidMembersSet.add(due.userId);
+        totalCollected += Number(due.amount);
+        paidMembersSet.add(due.user_id);
       } else if (due.status === 'arrears') {
-        arrearsMembersSet.add(due.userId);
+        arrearsMembersSet.add(due.user_id);
       }
-    });
-
-    const auditLogsSnapshot = await db.collection('auditLogs').orderBy('createdAt', 'desc').limit(10).get();
-    const recentActivity = [];
-    for (const doc of auditLogsSnapshot.docs) {
-      const log = doc.data();
-      let actorName = 'Unknown';
-      if (log.actorId) {
-        const actorDoc = await db.collection('users').doc(log.actorId).get();
-        if (actorDoc.exists) {
-          actorName = actorDoc.data().fullName || 'Unknown';
-        }
-      }
-      recentActivity.push({ id: log.id, action: log.action, target_table: log.targetTable ?? null, target_id: log.targetId ?? null, actor_name: actorName, created_at: log.createdAt ?? null });
     }
 
-    const regionsSnapshot = await db.collection('regions').orderBy('name').get();
-    const regionStats = [];
-    for (const regionDoc of regionsSnapshot.docs) {
-      const region = regionDoc.data();
-      const regionMembersSnapshot = await db.collection('users').where('regionId', '==', region.id).where('role', '==', 'member').where('isActive', '==', true).get();
-      let collected = 0;
-      for (const memberDoc of regionMembersSnapshot.docs) {
-        const memberDuesSnapshot = await db.collection('monthlyDues').where('userId', '==', memberDoc.id).where('status', '==', 'paid').get();
-        memberDuesSnapshot.forEach(dueDoc => {
-          collected += dueDoc.data().amount;
-        });
-      }
-      regionStats.push({
-        name: region.name,
-        code: region.code,
-        member_count: regionMembersSnapshot.size,
-        collected
-      });
+    // Resolve actor names for the recent activity feed in a single batched query.
+    const logs = logsRes.data || [];
+    const actorIds = [...new Set(logs.map(l => l.actor_id).filter(Boolean))];
+    const actorNames = new Map();
+    if (actorIds.length) {
+      const { data: actors, error: actorsErr } = await supabase
+        .from('users')
+        .select('id, full_name')
+        .in('id', actorIds);
+      if (actorsErr) throw actorsErr;
+      for (const a of actors || []) actorNames.set(a.id, a.full_name);
+    }
+    const recentActivity = logs.map(log => ({
+      id: log.id,
+      action: log.action,
+      target_table: log.target_table ?? null,
+      target_id: log.target_id ?? null,
+      actor_name: actorNames.get(log.actor_id) || 'Unknown',
+      created_at: log.created_at ?? null,
+    }));
+
+    // Region stats: collect paid amounts per region via one pass over the dues.
+    const regionById = new Map((regionsRes.data || []).map(r => [r.id, r]));
+    const memberRegion = new Map(members.map(m => [m.id, m.region_id]));
+    const regionStats = (regionsRes.data || []).map(r => ({ name: r.name, code: r.code, member_count: 0, collected: 0 }));
+    const statByName = new Map(regionStats.map(s => [s.name, s]));
+    for (const m of members) {
+      const region = regionById.get(m.region_id);
+      const stat = statByName.get(region?.name);
+      if (stat) stat.member_count++;
+    }
+    for (const due of duesRes.data || []) {
+      if (due.status !== 'paid') continue;
+      const region = regionById.get(memberRegion.get(due.user_id));
+      const stat = statByName.get(region?.name);
+      if (stat) stat.collected += Number(due.amount);
     }
 
-    res.json({ 
-      total_members: totalMembers, 
-      paid_members: paidMembersSet.size, 
-      arrears_members: arrearsMembersSet.size, 
-      total_collected: totalCollected, 
-      recent_activity: recentActivity, 
-      region_stats: regionStats 
+    res.json({
+      total_members: totalMembers,
+      paid_members: paidMembersSet.size,
+      arrears_members: arrearsMembersSet.size,
+      total_collected: totalCollected,
+      recent_activity: recentActivity,
+      region_stats: regionStats
     });
   } catch (err) {
     console.error(err);
@@ -138,32 +112,32 @@ router.get('/members', authenticate, requireSuperAdmin, async (req, res) => {
     const { search, region_id, page = 1, limit = 15 } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
-    let query = db.collection('users').where('role', '==', 'member').where('isActive', '==', true);
+    let query = supabase
+      .from('users')
+      .select('*, regions(name)')
+      .eq('role', 'member')
+      .eq('is_active', true);
     if (region_id) {
-      query = query.where('regionId', '==', region_id);
+      query = query.eq('region_id', region_id);
     }
 
-    const snapshot = await query.get();
-    let members = [];
-    for (const doc of snapshot.docs) {
-      const member = doc.data();
-      if (search) {
-        const searchLower = search.toLowerCase();
-        if (!((member.fullName || '').toLowerCase().includes(searchLower) ||
-              (member.userIdCode || '').toLowerCase().includes(searchLower) ||
-              (member.email || '').toLowerCase().includes(searchLower))) {
-          continue;
-        }
-      }
-      let regionName = null, regionId = member.regionId;
-      if (regionId) {
-        const regionDoc = await db.collection('regions').doc(regionId).get();
-        if (regionDoc.exists) {
-          regionName = regionDoc.data().name;
-        }
-      }
-      members.push({ ...mapMember(member), region_name: regionName, region_id: regionId });
+    const { data: rows, error } = await query;
+    if (error) throw error;
+
+    let members = (rows || []).map(row => ({
+      ...mapMember(row),
+      region_name: row.regions?.name ?? null,
+      region_id: row.region_id,
+    }));
+
+    if (search) {
+      const searchLower = search.toLowerCase();
+      members = members.filter(m =>
+        (m.full_name || '').toLowerCase().includes(searchLower) ||
+        (m.user_id_code || '').toLowerCase().includes(searchLower) ||
+        (m.email || '').toLowerCase().includes(searchLower));
     }
+
     members.sort((a, b) => (a.full_name || '').localeCompare(b.full_name || ''));
     const total = members.length;
     const paginatedMembers = members.slice(offset, offset + parseInt(limit));
@@ -177,37 +151,42 @@ router.get('/members', authenticate, requireSuperAdmin, async (req, res) => {
 // Single member with full ledger
 router.get('/members/:id', authenticate, requireSuperAdmin, async (req, res) => {
   try {
-    const memberDoc = await db.collection('users').doc(req.params.id).get();
-    if (!memberDoc.exists || memberDoc.data().role !== 'member' || !memberDoc.data().isActive) {
+    const { data: member, error: memberErr } = await supabase
+      .from('users')
+      .select('*, regions(name, code)')
+      .eq('id', req.params.id)
+      .single();
+    if (memberErr || !member || member.role !== 'member' || !member.is_active) {
       return res.status(404).json({ error: 'Member not found' });
     }
 
-    const member = memberDoc.data();
-
-    // Region lookup and the three collection queries are independent, so run
-    // them concurrently instead of four sequential Firestore round trips.
-    const [regionDoc, duesSnapshot, programPledgesSnapshot, otherPledgesSnapshot] = await Promise.all([
-      member.regionId ? db.collection('regions').doc(member.regionId).get() : Promise.resolve(null),
-      db.collection('monthlyDues').where('userId', '==', req.params.id).orderBy('dueYear', 'desc').orderBy('dueMonth', 'desc').get(),
-      db.collection('programPledges').where('userId', '==', req.params.id).orderBy('createdAt', 'desc').get(),
-      db.collection('otherPledges').where('userId', '==', req.params.id).orderBy('createdAt', 'desc').get(),
+    // Region name and the three ledger queries are independent, so run them
+    // concurrently instead of sequential round trips.
+    const [duesRes, programRes, otherRes] = await Promise.all([
+      supabase.from('monthly_dues').select('*')
+        .eq('user_id', req.params.id)
+        .order('due_year', { ascending: false })
+        .order('due_month', { ascending: false }),
+      supabase.from('program_pledges').select('*')
+        .eq('user_id', req.params.id)
+        .order('created_at', { ascending: false }),
+      supabase.from('other_pledges').select('*')
+        .eq('user_id', req.params.id)
+        .order('created_at', { ascending: false }),
     ]);
-
-    let regionName = null, regionCode = null;
-    if (regionDoc && regionDoc.exists) {
-      regionName = regionDoc.data().name;
-      regionCode = regionDoc.data().code;
+    if (duesRes.error || programRes.error || otherRes.error) {
+      throw duesRes.error || programRes.error || otherRes.error;
     }
 
-    const dues = duesSnapshot.docs.map(doc => mapDue(doc.data()));
-    const programPledges = programPledgesSnapshot.docs.map(doc => mapProgramPledge(doc.data()));
-    const otherPledges = otherPledgesSnapshot.docs.map(doc => mapOtherPledge(doc.data()));
-
     res.json({
-      member: { ...mapMember(member), region_name: regionName, region_code: regionCode },
-      dues,
-      program_pledges: programPledges,
-      other_pledges: otherPledges
+      member: {
+        ...mapMember(member),
+        region_name: member.regions?.name ?? null,
+        region_code: member.regions?.code ?? null,
+      },
+      dues: duesRes.data || [],
+      program_pledges: programRes.data || [],
+      other_pledges: otherRes.data || [],
     });
   } catch (err) {
     console.error(err);
@@ -221,36 +200,46 @@ router.post('/members', authenticate, requireSuperAdmin, async (req, res) => {
     const { full_name, email, position, region_id, dept_code } = req.body;
     if (!full_name || !email || !region_id) return res.status(400).json({ error: 'Name, email, and region are required' });
 
-    const existingEmailSnapshot = await db.collection('users').where('email', '==', email.toLowerCase()).get();
-    if (!existingEmailSnapshot.empty) return res.status(409).json({ error: 'Email already exists' });
+    const { data: dup, error: dupErr } = await supabase
+      .from('users')
+      .select('id')
+      .eq('email', email.toLowerCase())
+      .limit(1);
+    if (dupErr) throw dupErr;
+    if (dup?.length) return res.status(409).json({ error: 'Email already exists' });
 
-    const regionDoc = await db.collection('regions').doc(region_id).get();
-    if (!regionDoc.exists) return res.status(400).json({ error: 'Invalid region' });
-    const regionCode = regionDoc.data().code;
+    const { data: region, error: regionErr } = await supabase
+      .from('regions')
+      .select('*')
+      .eq('id', region_id)
+      .single();
+    if (regionErr || !region) return res.status(400).json({ error: 'Invalid region' });
 
     const dCode = (dept_code || 'MED').toUpperCase();
     const userId = uuidv4();
-    const userIdCode = await generateUserId(regionCode, dCode);
+    const userIdCode = await generateUserId(region.code, dCode);
     // Cryptographically random temp password instead of a fixed shared one.
     // Keeps the Member@… shape the password policy expects (upper, lower, digit, symbol).
     const tempPass = `Member@${crypto.randomBytes(4).toString('hex')}`;
     const hash = await bcrypt.hash(tempPass, 10);
 
-    await db.collection('users').doc(userId).set({
+    const now = new Date().toISOString();
+    const { error: insertErr } = await supabase.from('users').insert({
       id: userId,
-      userIdCode,
-      fullName: full_name.trim(),
+      user_id_code: userIdCode,
+      full_name: full_name.trim(),
       email: email.toLowerCase().trim(),
-      passwordHash: hash,
+      password_hash: hash,
       position: position || '',
-      regionId: region_id,
-      deptCode: dCode,
+      region_id,
+      dept_code: dCode,
       role: 'member',
-      isActive: true,
-      mustChangePassword: true,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
+      is_active: true,
+      must_change_password: true,
+      created_at: now,
+      updated_at: now,
     });
+    if (insertErr) throw insertErr;
 
     await auditLog(req.user.id, 'CREATE_MEMBER', 'users', userId, null, { full_name, email, userIdCode });
     res.status(201).json({ message: 'Member created', id: userId, user_id_code: userIdCode, temp_password: tempPass });
@@ -260,36 +249,46 @@ router.post('/members', authenticate, requireSuperAdmin, async (req, res) => {
   }
 });
 
+
 // Update member
 router.put('/members/:id', authenticate, requireSuperAdmin, async (req, res) => {
   try {
-    const memberDocRef = db.collection('users').doc(req.params.id);
-    const memberDoc = await memberDocRef.get();
-    if (!memberDoc.exists) return res.status(404).json({ error: 'Member not found' });
-
-    const before = memberDoc.data();
-    delete before.passwordHash;
+    const { data: before, error: beforeErr } = await supabase
+      .from('users')
+      .select('*')
+      .eq('id', req.params.id)
+      .single();
+    if (beforeErr || !before) return res.status(404).json({ error: 'Member not found' });
+    delete before.password_hash;
 
     const { full_name, email, position, region_id, dept_code, is_active } = req.body;
 
     // Enforce the same email-uniqueness rule as member creation so an admin
     // edit cannot collide two accounts onto one login identity.
     if (email && email.toLowerCase() !== String(before.email).toLowerCase()) {
-      const dupSnapshot = await db.collection('users').where('email', '==', email.toLowerCase()).get();
-      if (!dupSnapshot.empty) return res.status(409).json({ error: 'Email already exists' });
+      const { data: dup, error: dupErr } = await supabase
+        .from('users')
+        .select('id')
+        .eq('email', email.toLowerCase())
+        .limit(1);
+      if (dupErr) throw dupErr;
+      if (dup?.length) return res.status(409).json({ error: 'Email already exists' });
     }
 
-    const updateData = {
-      fullName: full_name || before.fullName,
-      email: email || before.email,
-      position: position ?? before.position,
-      regionId: region_id || before.regionId,
-      deptCode: dept_code || before.deptCode,
-      isActive: is_active !== undefined ? is_active : before.isActive,
-      updatedAt: new Date().toISOString()
-    };
+    const { error: updateErr } = await supabase
+      .from('users')
+      .update({
+        full_name: full_name || before.full_name,
+        email: email || before.email,
+        position: position ?? before.position,
+        region_id: region_id || before.region_id,
+        dept_code: dept_code || before.dept_code,
+        is_active: is_active !== undefined ? is_active : before.is_active,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', req.params.id);
+    if (updateErr) throw updateErr;
 
-    await memberDocRef.update(updateData);
     await auditLog(req.user.id, 'UPDATE_MEMBER', 'users', req.params.id, before, req.body);
     res.json({ message: 'Member updated' });
   } catch (err) {
@@ -301,13 +300,20 @@ router.put('/members/:id', authenticate, requireSuperAdmin, async (req, res) => 
 // Soft-delete member
 router.delete('/members/:id', authenticate, requireSuperAdmin, async (req, res) => {
   try {
-    const memberDocRef = db.collection('users').doc(req.params.id);
-    const memberDoc = await memberDocRef.get();
-    if (!memberDoc.exists) return res.status(404).json({ error: 'Member not found' });
+    const { data: member, error: memberErr } = await supabase
+      .from('users')
+      .select('full_name')
+      .eq('id', req.params.id)
+      .single();
+    if (memberErr || !member) return res.status(404).json({ error: 'Member not found' });
 
-    const fullName = memberDoc.data().fullName;
-    await memberDocRef.update({ isActive: false, updatedAt: new Date().toISOString() });
-    await auditLog(req.user.id, 'DELETE_MEMBER', 'users', req.params.id, { fullName }, null);
+    const { error: updateErr } = await supabase
+      .from('users')
+      .update({ is_active: false, updated_at: new Date().toISOString() })
+      .eq('id', req.params.id);
+    if (updateErr) throw updateErr;
+
+    await auditLog(req.user.id, 'DELETE_MEMBER', 'users', req.params.id, { fullName: member.full_name }, null);
     res.json({ message: 'Member archived' });
   } catch (err) {
     console.error(err);
@@ -315,12 +321,13 @@ router.delete('/members/:id', authenticate, requireSuperAdmin, async (req, res) 
   }
 });
 
+
 // Get regions
 router.get('/regions', authenticate, requireSuperAdmin, async (req, res) => {
   try {
-    const regionsSnapshot = await db.collection('regions').orderBy('name').get();
-    const regions = regionsSnapshot.docs.map(doc => doc.data());
-    res.json(regions);
+    const { data, error } = await supabase.from('regions').select('*').order('name');
+    if (error) throw error;
+    res.json(data || []);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to fetch regions' });
@@ -355,19 +362,15 @@ router.post('/batch-upload', authenticate, requireSuperAdmin, upload.single('fil
 
       let userId = null;
       if (row.user_id) {
-        const snapshot = await db.collection('users').where('userIdCode', '==', row.user_id).get();
-        if (!snapshot.empty) {
-          userId = snapshot.docs[0].id;
-        }
+        const { data } = await supabase.from('users').select('id').eq('user_id_code', row.user_id).limit(1);
+        if (data?.length) userId = data[0].id;
       }
       if (!userId && row.email) {
-        const snapshot = await db.collection('users').where('email', '==', row.email).get();
-        if (!snapshot.empty) {
-          userId = snapshot.docs[0].id;
-        }
+        const { data } = await supabase.from('users').select('id').eq('email', row.email).limit(1);
+        if (data?.length) userId = data[0].id;
       }
       if (!userId) {
-        errors.push({ row: rowNum, error: `User not found: ${row.user_id || row.email}` }); 
+        errors.push({ row: rowNum, error: `User not found: ${row.user_id || row.email}` });
         continue;
       }
 
@@ -377,45 +380,57 @@ router.post('/batch-upload', authenticate, requireSuperAdmin, upload.single('fil
         if (month < 1 || month > 12 || year < 2000) {
           errors.push({ row: rowNum, error: `Invalid month/year: ${month}/${year}` });
         } else {
-          const existingDueSnapshot = await db.collection('monthlyDues').where('userId', '==', userId).where('dueMonth', '==', month).where('dueYear', '==', year).get();
-          if (!existingDueSnapshot.empty) {
-            await existingDueSnapshot.docs[0].ref.update({
-              amount: parseFloat(row.due_amount) || 0,
-              status,
-              updatedBy: req.user.id,
-              updatedAt: new Date().toISOString()
-            });
+          const { data: existingDue } = await supabase
+            .from('monthly_dues')
+            .select('id')
+            .eq('user_id', userId)
+            .eq('due_month', month)
+            .eq('due_year', year)
+            .limit(1);
+          const now = new Date().toISOString();
+          if (existingDue?.length) {
+            const { error: upErr } = await supabase
+              .from('monthly_dues')
+              .update({
+                amount: parseFloat(row.due_amount) || 0,
+                status,
+                updated_by: req.user.id,
+                updated_at: now,
+              })
+              .eq('id', existingDue[0].id);
+            if (upErr) throw upErr;
           } else {
-            const dueId = uuidv4();
-            await db.collection('monthlyDues').doc(dueId).set({
-              id: dueId,
-              userId,
-              dueMonth: month,
-              dueYear: year,
+            const { error: insErr } = await supabase.from('monthly_dues').insert({
+              id: uuidv4(),
+              user_id: userId,
+              due_month: month,
+              due_year: year,
               amount: parseFloat(row.due_amount) || 0,
               status,
-              updatedBy: req.user.id,
-              createdAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString()
+              updated_by: req.user.id,
+              created_at: now,
+              updated_at: now,
             });
+            if (insErr) throw insErr;
           }
           successes.push(rowNum);
         }
       }
 
       if (row.pledge_program) {
-        const pledgeId = uuidv4();
-        await db.collection('programPledges').doc(pledgeId).set({
-          id: pledgeId,
-          userId,
-          programName: row.pledge_program,
-          pledgeAmount: parseFloat(row.pledge_amount) || 0,
+        const now = new Date().toISOString();
+        const { error: pledgeErr } = await supabase.from('program_pledges').insert({
+          id: uuidv4(),
+          user_id: userId,
+          program_name: row.pledge_program,
+          pledge_amount: parseFloat(row.pledge_amount) || 0,
           status: ['paid','pending','arrears'].includes(row.pledge_status) ? row.pledge_status : 'pending',
-          pledgeDate: row.pledge_date || null,
-          updatedBy: req.user.id,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
+          pledge_date: row.pledge_date || null,
+          updated_by: req.user.id,
+          created_at: now,
+          updated_at: now,
         });
+        if (pledgeErr) throw pledgeErr;
         successes.push(`${rowNum}(pledge)`);
       }
     }
@@ -428,35 +443,31 @@ router.post('/batch-upload', authenticate, requireSuperAdmin, upload.single('fil
   }
 });
 
+
 // Export members to Excel
 router.get('/export', authenticate, requireSuperAdmin, async (req, res) => {
   try {
     const { region_id } = req.query;
-    let query = db.collection('users').where('role', '==', 'member').where('isActive', '==', true);
+    let query = supabase
+      .from('users')
+      .select('*, regions(name)')
+      .eq('role', 'member')
+      .eq('is_active', true);
     if (region_id) {
-      query = query.where('regionId', '==', region_id);
+      query = query.eq('region_id', region_id);
     }
 
-    const snapshot = await query.get();
-    const members = [];
-    for (const doc of snapshot.docs) {
-      const member = doc.data();
-      let region = '';
-      if (member.regionId) {
-        const regionDoc = await db.collection('regions').doc(member.regionId).get();
-        if (regionDoc.exists) {
-          region = regionDoc.data().name;
-        }
-      }
-      members.push({
-        user_id_code: member.userIdCode,
-        full_name: member.fullName,
-        email: member.email,
-        position: member.position,
-        region,
-        created_at: member.createdAt
-      });
-    }
+    const { data: rows, error } = await query;
+    if (error) throw error;
+
+    const members = (rows || []).map(row => ({
+      user_id_code: row.user_id_code,
+      full_name: row.full_name,
+      email: row.email,
+      position: row.position,
+      region: row.regions?.name ?? '',
+      created_at: row.created_at,
+    }));
     members.sort((a, b) => a.region.localeCompare(b.region) || a.full_name.localeCompare(b.full_name));
 
     const wb = XLSX.utils.book_new();
@@ -474,20 +485,34 @@ router.get('/export', authenticate, requireSuperAdmin, async (req, res) => {
 // Audit logs
 router.get('/audit-logs', authenticate, requireSuperAdmin, async (req, res) => {
   try {
-    const snapshot = await db.collection('auditLogs').orderBy('createdAt', 'desc').limit(100).get();
-    const logs = [];
-    for (const doc of snapshot.docs) {
-      const log = doc.data();
-      let actorName = 'Unknown';
-      if (log.actorId) {
-        const actorDoc = await db.collection('users').doc(log.actorId).get();
-        if (actorDoc.exists) {
-          actorName = actorDoc.data().fullName || 'Unknown';
-        }
-      }
-      logs.push({ id: log.id, action: log.action, target_table: log.targetTable ?? null, target_id: log.targetId ?? null, actor_name: actorName, before_value: log.beforeValue ?? null, after_value: log.afterValue ?? null, created_at: log.createdAt ?? null });
+    const { data: logs, error } = await supabase
+      .from('audit_logs')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(100);
+    if (error) throw error;
+
+    const actorIds = [...new Set((logs || []).map(l => l.actor_id).filter(Boolean))];
+    const actorNames = new Map();
+    if (actorIds.length) {
+      const { data: actors, error: actorsErr } = await supabase
+        .from('users')
+        .select('id, full_name')
+        .in('id', actorIds);
+      if (actorsErr) throw actorsErr;
+      for (const a of actors || []) actorNames.set(a.id, a.full_name);
     }
-    res.json(logs);
+
+    res.json((logs || []).map(log => ({
+      id: log.id,
+      action: log.action,
+      target_table: log.target_table ?? null,
+      target_id: log.target_id ?? null,
+      actor_name: actorNames.get(log.actor_id) || 'Unknown',
+      before_value: log.before_value ?? null,
+      after_value: log.after_value ?? null,
+      created_at: log.created_at ?? null,
+    })));
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to fetch audit logs' });
@@ -495,3 +520,4 @@ router.get('/audit-logs', authenticate, requireSuperAdmin, async (req, res) => {
 });
 
 module.exports = router;
+

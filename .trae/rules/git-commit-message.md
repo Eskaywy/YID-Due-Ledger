@@ -4,6 +4,6 @@ description: after each changes
 scene: git_message
 ---
 Write your rules here to customize the style of AI-generated commit messages.
-feat(firebase): add firebase admin and frontend SDK setup files
+feat(db): add supabase client and schema
 
-Create root-level firebaseAdmin.js for server-side Firebase Admin SDK initialization using the service account key. Add frontend/src/utils/firebase.js that initializes the web Firebase SDK with the project's web app configuration, then exports auth, Firestore, and storage services.
+Create root-level supabaseAdmin.js for server-side Supabase access using the service role key. Add supabase/schema.sql with the Postgres tables and atomic counter RPC functions that mint Smart Ledger IDs.

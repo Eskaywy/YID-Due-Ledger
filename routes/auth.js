@@ -1,39 +1,38 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
-const { db, generateSmartId, findOrCreateDepartment, findOrCreateRegion } = require('../db');
+const { supabase, generateSmartId, findOrCreateDepartment, findOrCreateRegion } = require('../db');
 const { authenticate, generateToken } = require('../middleware/auth');
 const { auditLog } = require('../middleware/audit');
 
 const router = express.Router();
 
-// Convert a Firestore user doc into the snake_case API shape the frontend expects
-// (never exposes passwordHash).
+// The users table already stores snake_case columns matching the API shape the
+// frontend expects, so the row maps 1:1 (and never exposes password_hash).
 const publicUser = (user, regionName = null, regionCode = null) => ({
   id: user.id,
-  user_id_code: user.userIdCode ?? null,
-  full_name: user.fullName ?? null,
+  user_id_code: user.user_id_code ?? null,
+  full_name: user.full_name ?? null,
   email: user.email ?? null,
   position: user.position ?? null,
-  role_title: user.roleTitle ?? null,
-  region_id: user.regionId ?? null,
+  role_title: user.role_title ?? null,
+  region_id: user.region_id ?? null,
   region_name: regionName,
   region_code: regionCode,
-  dept_code: user.deptCode ?? null,
+  dept_code: user.dept_code ?? null,
   role: user.role ?? 'member',
-  is_active: user.isActive ?? true,
-  must_change_password: user.mustChangePassword === true,
-  created_at: user.createdAt ?? null,
-  updated_at: user.updatedAt ?? null,
+  is_active: user.is_active ?? true,
+  must_change_password: user.must_change_password === true,
+  created_at: user.created_at ?? null,
+  updated_at: user.updated_at ?? null,
 });
 
 // Load a region's name/code by its id.
 const getRegion = async (regionId) => {
   if (!regionId) return { regionName: null, regionCode: null };
-  const regionDoc = await db.collection('regions').doc(regionId).get();
-  if (!regionDoc.exists) return { regionName: null, regionCode: null };
-  const region = regionDoc.data();
-  return { regionName: region.name ?? null, regionCode: region.code ?? null };
+  const { data, error } = await supabase.from('regions').select('*').eq('id', regionId).single();
+  if (error || !data) return { regionName: null, regionCode: null };
+  return { regionName: data.name ?? null, regionCode: data.code ?? null };
 };
 
 router.post('/login', async (req, res) => {
@@ -44,17 +43,23 @@ router.post('/login', async (req, res) => {
     const { password } = req.body;
     if (!identifier || !password) return res.status(400).json({ error: 'Email / Smart ID and password required' });
 
-    const usersSnapshot = identifier.includes('@')
-      ? await db.collection('users').where('email', '==', identifier.toLowerCase()).where('isActive', '==', true).limit(1).get()
-      : await db.collection('users').where('userIdCode', '==', identifier.toUpperCase()).where('isActive', '==', true).limit(1).get();
-    if (usersSnapshot.empty) return res.status(401).json({ error: 'Invalid credentials' });
+    const column = identifier.includes('@') ? 'email' : 'user_id_code';
+    const value = identifier.includes('@') ? identifier.toLowerCase() : identifier.toUpperCase();
+    const { data: users, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq(column, value)
+      .eq('is_active', true)
+      .limit(1);
+    if (error) throw error;
+    if (!users?.length) return res.status(401).json({ error: 'Invalid credentials' });
 
-    const user = usersSnapshot.docs[0].data();
-    const valid = await bcrypt.compare(password, user.passwordHash);
+    const user = users[0];
+    const valid = await bcrypt.compare(password, user.password_hash);
     if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
 
     // Get region data
-    const { regionName, regionCode } = await getRegion(user.regionId);
+    const { regionName, regionCode } = await getRegion(user.region_id);
 
     const token = generateToken(user.id);
     res.json({ token, user: publicUser(user, regionName, regionCode) });
@@ -67,12 +72,9 @@ router.post('/login', async (req, res) => {
 // Public list of regions (used by the signup form, no auth required)
 router.get('/regions', async (req, res) => {
   try {
-    const regionsSnapshot = await db.collection('regions').orderBy('name').get();
-    const regions = regionsSnapshot.docs.map(doc => {
-      const r = doc.data();
-      return { id: r.id ?? doc.id, name: r.name ?? null, code: r.code ?? null };
-    });
-    res.json(regions);
+    const { data, error } = await supabase.from('regions').select('*').order('name');
+    if (error) throw error;
+    res.json((data || []).map(r => ({ id: r.id, name: r.name ?? null, code: r.code ?? null })));
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to fetch regions' });
@@ -83,18 +85,18 @@ router.get('/regions', async (req, res) => {
 // defaults (Information / Media) on first call so the dropdown is never empty.
 router.get('/departments', async (req, res) => {
   try {
-    let snapshot = await db.collection('departments').orderBy('name').get();
-    if (snapshot.empty) {
-      for (const d of [{ name: 'Information', code: 'INF' }, { name: 'Media', code: 'MED' }]) {
-        const ref = db.collection('departments').doc();
-        await ref.set({ id: ref.id, ...d, createdAt: new Date().toISOString() });
-      }
-      snapshot = await db.collection('departments').orderBy('name').get();
+    let { data, error } = await supabase.from('departments').select('*').order('name');
+    if (error) throw error;
+    if (!data?.length) {
+      const { error: seedErr } = await supabase.from('departments').insert(
+        [{ name: 'Information', code: 'INF' }, { name: 'Media', code: 'MED' }]
+          .map(d => ({ id: uuidv4(), ...d, created_at: new Date().toISOString() }))
+      );
+      if (seedErr) throw seedErr;
+      const re = await supabase.from('departments').select('*').order('name');
+      data = re.data;
     }
-    res.json(snapshot.docs.map(doc => {
-      const d = doc.data();
-      return { id: d.id ?? doc.id, name: d.name ?? null, code: d.code ?? null };
-    }));
+    res.json((data || []).map(d => ({ id: d.id, name: d.name ?? null, code: d.code ?? null })));
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to fetch departments' });
@@ -103,11 +105,10 @@ router.get('/departments', async (req, res) => {
 
 router.get('/me', authenticate, async (req, res) => {
   try {
-    const userDoc = await db.collection('users').doc(req.user.id).get();
-    if (!userDoc.exists) return res.status(404).json({ error: 'User not found' });
-    const user = userDoc.data();
+    const { data: user, error } = await supabase.from('users').select('*').eq('id', req.user.id).single();
+    if (error || !user) return res.status(404).json({ error: 'User not found' });
 
-    const { regionName, regionCode } = await getRegion(user.regionId);
+    const { regionName, regionCode } = await getRegion(user.region_id);
     res.json(publicUser(user, regionName, regionCode));
   } catch (err) {
     console.error(err);
@@ -133,22 +134,27 @@ router.post('/signup', async (req, res) => {
     if (!fullName || !email || !password) {
       return res.status(400).json({ error: 'Name, email, and password required' });
     }
-    
+
     if (password.length < 8) {
       return res.status(400).json({ error: 'Password must be at least 8 characters' });
     }
 
     // Check if email already exists
-    const existingEmailSnapshot = await db.collection('users').where('email', '==', email.toLowerCase().trim()).get();
-    if (!existingEmailSnapshot.empty) {
+    const { data: existingEmail, error: emailErr } = await supabase
+      .from('users')
+      .select('id')
+      .eq('email', email.toLowerCase().trim())
+      .limit(1);
+    if (emailErr) throw emailErr;
+    if (existingEmail?.length) {
       return res.status(400).json({ error: 'Email already registered' });
     }
 
     // Create new user
     const userId = uuidv4();
     const passwordHash = await bcrypt.hash(password, 10);
-    
-    // Resolve the department: an explicit code picks an existing doc, a raw
+
+    // Resolve the department: an explicit code picks an existing row, a raw
     // name (the prototype's "Other" path) is upserted for everyone.
     const dept = await findOrCreateDepartment(dept_code, department_name);
     if (!dept) return res.status(400).json({ error: 'Department is required' });
@@ -159,8 +165,13 @@ router.post('/signup', async (req, res) => {
       region = await findOrCreateRegion(region_id, region_name);
     }
     if (!region) {
-      const defaultRegionSnapshot = await db.collection('regions').where('code', '==', 'LGS').limit(1).get();
-      region = defaultRegionSnapshot.empty ? null : defaultRegionSnapshot.docs[0].data();
+      const { data: defaults, error: defErr } = await supabase
+        .from('regions')
+        .select('*')
+        .eq('code', 'LGS')
+        .limit(1);
+      if (defErr) throw defErr;
+      region = defaults?.length ? defaults[0] : null;
     }
     if (!region) return res.status(400).json({ error: 'Region is required' });
 
@@ -172,39 +183,37 @@ router.post('/signup', async (req, res) => {
       deptCode: dept.code,
     });
 
-    await db.collection('users').doc(userId).set({
+    const now = new Date().toISOString();
+    const { error: insertErr } = await supabase.from('users').insert({
       id: userId,
-      userIdCode: user_id_code,
-      fullName,
-      roleTitle: roleTitle || null,
+      user_id_code,
+      full_name: fullName,
+      role_title: roleTitle || null,
       email: email.toLowerCase().trim(),
-      passwordHash,
+      password_hash: passwordHash,
       position: position || null,
-      regionId: region.id,
-      deptCode: dept.code,
+      region_id: region.id,
+      dept_code: dept.code,
       role: 'member',
-      isActive: true,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      is_active: true,
+      created_at: now,
+      updated_at: now,
     });
-    
+    if (insertErr) throw insertErr;
+
     // Auto login after signup
-    const userDoc = await db.collection('users').doc(userId).get();
-    const user = userDoc.data();
-    
-    // Get region data
-    let regionName = null, regionCode = null;
-    if (user.regionId) {
-      const regionDoc = await db.collection('regions').doc(user.regionId).get();
-      if (regionDoc.exists) {
-        regionName = regionDoc.data().name;
-        regionCode = regionDoc.data().code;
-      }
-    }
-    
+    const { data: user, error: fetchErr } = await supabase
+      .from('users')
+      .select('*')
+      .eq('id', userId)
+      .single();
+    if (fetchErr || !user) throw fetchErr || new Error('User fetch failed');
+
+    const { regionName, regionCode } = await getRegion(user.region_id);
+
     const token = generateToken(user.id);
     res.json({ token, user: publicUser(user, regionName, regionCode) });
-    
+
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Signup failed' });
@@ -217,19 +226,18 @@ router.put('/change-password', authenticate, async (req, res) => {
     if (!currentPassword || !newPassword) return res.status(400).json({ error: 'Both passwords required' });
     if (newPassword.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
 
-    const userDoc = await db.collection('users').doc(req.user.id).get();
-    if (!userDoc.exists) return res.status(404).json({ error: 'User not found' });
-    const user = userDoc.data();
+    const { data: user, error } = await supabase.from('users').select('*').eq('id', req.user.id).single();
+    if (error || !user) return res.status(404).json({ error: 'User not found' });
 
-    const valid = await bcrypt.compare(currentPassword, user.passwordHash);
+    const valid = await bcrypt.compare(currentPassword, user.password_hash);
     if (!valid) return res.status(401).json({ error: 'Current password is incorrect' });
 
     const newHash = await bcrypt.hash(newPassword, 10);
-    await db.collection('users').doc(req.user.id).update({
-      passwordHash: newHash,
-      mustChangePassword: false,
-      updatedAt: new Date().toISOString(),
-    });
+    const { error: updateErr } = await supabase
+      .from('users')
+      .update({ password_hash: newHash, must_change_password: false, updated_at: new Date().toISOString() })
+      .eq('id', req.user.id);
+    if (updateErr) throw updateErr;
 
     await auditLog(req.user.id, 'CHANGE_PASSWORD', 'users', req.user.id, null, null);
     res.json({ message: 'Password updated successfully' });
@@ -240,3 +248,4 @@ router.put('/change-password', authenticate, async (req, res) => {
 });
 
 module.exports = router;
+

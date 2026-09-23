@@ -4,15 +4,10 @@
 # Dependencies
 node_modules/
 frontend/node_modules/
-functions/node_modules/
 
 # Build outputs
 frontend/dist/
 build/
-
-# Functions
-functions/.env
-functions/.runtimeconfig.json
 
 # Environment files
 .env
@@ -35,12 +30,9 @@ yarn-debug.log*
 yarn-error.log*
 lerna-debug.log*
 server.log
-firebase-debug.log
 
 # Script output files
 preview-check.txt
-indexes-rest-result.txt
-verify-queries-result.txt
 
 # Temporary files
 *.tmp
@@ -48,11 +40,9 @@ verify-queries-result.txt
 .DS_Store
 Thumbs.db
 
-# Database (migrated to Firestore — these are stale dev artifacts)
+# Stale dev artifacts
 data/*.db
 data/*.sqlite
 
-# Firebase service account key (keep secure!)
-serviceAccountKey.json
-.vercel
-.env*
+# Supabase service role key must NEVER be committed — it lives in env vars only
+

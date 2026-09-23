@@ -16,7 +16,7 @@
       "config": {
         "maxMemory": 1024,
         "maxDuration": 30,
-        "includeFiles": "routes/**/*,middleware/**/*,db.js,firebaseAdmin.js,package.json,api/index.js,server.js"
+        "includeFiles": "routes/**/*,middleware/**/*,db.js,supabaseAdmin.js,package.json,api/index.js,server.js"
       }
     }
   ],

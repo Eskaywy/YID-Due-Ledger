@@ -1,52 +1,22 @@
 const express = require('express');
-const { db } = require('../db');
+const { supabase } = require('../db');
 const { authenticate } = require('../middleware/auth');
 
 const router = express.Router();
 
-// Map Firestore camelCase docs to the snake_case API shape the frontend expects
-const mapDue = (d = {}) => ({
-  id: d.id,
-  user_id: d.userId ?? null,
-  due_month: d.dueMonth ?? null,
-  due_year: d.dueYear ?? null,
-  amount: d.amount ?? 0,
-  status: d.status ?? 'pending',
-  notes: d.notes ?? null,
-  updated_by: d.updatedBy ?? null,
-  created_at: d.createdAt ?? null,
-  updated_at: d.updatedAt ?? null,
-});
-
-const mapProgramPledge = (p = {}) => ({
-  id: p.id,
-  user_id: p.userId ?? null,
-  program_name: p.programName ?? null,
-  pledge_amount: p.pledgeAmount ?? 0,
-  status: p.status ?? 'pending',
-  pledge_date: p.pledgeDate ?? null,
-  notes: p.notes ?? null,
-  created_at: p.createdAt ?? null,
-  updated_at: p.updatedAt ?? null,
-});
-
-const mapOtherPledge = (o = {}) => ({
-  id: o.id,
-  user_id: o.userId ?? null,
-  description: o.description ?? null,
-  pledge_amount: o.pledgeAmount ?? 0,
-  status: o.status ?? 'pending',
-  pledge_date: o.pledgeDate ?? null,
-  notes: o.notes ?? null,
-  created_at: o.createdAt ?? null,
-  updated_at: o.updatedAt ?? null,
-});
+// The tables use snake_case columns that match the API shape the frontend
+// expects, so rows map 1:1.
 
 router.get('/my/dues', authenticate, async (req, res) => {
   try {
-    const duesSnapshot = await db.collection('monthlyDues').where('userId', '==', req.user.id).orderBy('dueYear', 'desc').orderBy('dueMonth', 'desc').get();
-    const dues = duesSnapshot.docs.map(doc => mapDue(doc.data()));
-    res.json(dues);
+    const { data, error } = await supabase
+      .from('monthly_dues')
+      .select('*')
+      .eq('user_id', req.user.id)
+      .order('due_year', { ascending: false })
+      .order('due_month', { ascending: false });
+    if (error) throw error;
+    res.json(data || []);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to fetch dues' });
@@ -55,9 +25,13 @@ router.get('/my/dues', authenticate, async (req, res) => {
 
 router.get('/my/pledges/program', authenticate, async (req, res) => {
   try {
-    const pledgesSnapshot = await db.collection('programPledges').where('userId', '==', req.user.id).orderBy('createdAt', 'desc').get();
-    const pledges = pledgesSnapshot.docs.map(doc => mapProgramPledge(doc.data()));
-    res.json(pledges);
+    const { data, error } = await supabase
+      .from('program_pledges')
+      .select('*')
+      .eq('user_id', req.user.id)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    res.json(data || []);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to fetch program pledges' });
@@ -66,9 +40,13 @@ router.get('/my/pledges/program', authenticate, async (req, res) => {
 
 router.get('/my/pledges/other', authenticate, async (req, res) => {
   try {
-    const pledgesSnapshot = await db.collection('otherPledges').where('userId', '==', req.user.id).orderBy('createdAt', 'desc').get();
-    const pledges = pledgesSnapshot.docs.map(doc => mapOtherPledge(doc.data()));
-    res.json(pledges);
+    const { data, error } = await supabase
+      .from('other_pledges')
+      .select('*')
+      .eq('user_id', req.user.id)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    res.json(data || []);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to fetch other pledges' });
@@ -78,34 +56,36 @@ router.get('/my/pledges/other', authenticate, async (req, res) => {
 router.get('/my/summary', authenticate, async (req, res) => {
   try {
     const uid = req.user.id;
-    const duesSnapshot = await db.collection('monthlyDues').where('userId', '==', uid).get();
-    const programPledgesSnapshot = await db.collection('programPledges').where('userId', '==', uid).get();
-    const otherPledgesSnapshot = await db.collection('otherPledges').where('userId', '==', uid).get();
+    const [duesRes, programRes, otherRes] = await Promise.all([
+      supabase.from('monthly_dues').select('amount, status').eq('user_id', uid),
+      supabase.from('program_pledges').select('pledge_amount, status').eq('user_id', uid),
+      supabase.from('other_pledges').select('pledge_amount, status').eq('user_id', uid),
+    ]);
+    if (duesRes.error || programRes.error || otherRes.error) {
+      throw duesRes.error || programRes.error || otherRes.error;
+    }
 
     let duesPaid = 0, duesPending = 0, duesArrears = 0, duesTotal = 0;
-    duesSnapshot.forEach(doc => {
-      const due = doc.data();
+    for (const due of duesRes.data || []) {
       duesTotal++;
-      if (due.status === 'paid') duesPaid += due.amount;
-      else if (due.status === 'pending') duesPending += due.amount;
-      else if (due.status === 'arrears') duesArrears += due.amount;
-    });
+      if (due.status === 'paid') duesPaid += Number(due.amount);
+      else if (due.status === 'pending') duesPending += Number(due.amount);
+      else if (due.status === 'arrears') duesArrears += Number(due.amount);
+    }
 
     let progPaid = 0, progPending = 0, progArrears = 0;
-    programPledgesSnapshot.forEach(doc => {
-      const pledge = doc.data();
-      if (pledge.status === 'paid') progPaid += pledge.pledgeAmount;
-      else if (pledge.status === 'pending') progPending += pledge.pledgeAmount;
-      else if (pledge.status === 'arrears') progArrears += pledge.pledgeAmount;
-    });
+    for (const pledge of programRes.data || []) {
+      if (pledge.status === 'paid') progPaid += Number(pledge.pledge_amount);
+      else if (pledge.status === 'pending') progPending += Number(pledge.pledge_amount);
+      else if (pledge.status === 'arrears') progArrears += Number(pledge.pledge_amount);
+    }
 
     let otherPaid = 0, otherPending = 0, otherArrears = 0;
-    otherPledgesSnapshot.forEach(doc => {
-      const pledge = doc.data();
-      if (pledge.status === 'paid') otherPaid += pledge.pledgeAmount;
-      else if (pledge.status === 'pending') otherPending += pledge.pledgeAmount;
-      else if (pledge.status === 'arrears') otherArrears += pledge.pledgeAmount;
-    });
+    for (const pledge of otherRes.data || []) {
+      if (pledge.status === 'paid') otherPaid += Number(pledge.pledge_amount);
+      else if (pledge.status === 'pending') otherPending += Number(pledge.pledge_amount);
+      else if (pledge.status === 'arrears') otherArrears += Number(pledge.pledge_amount);
+    }
 
     res.json({
       dues: { paid: duesPaid, pending: duesPending, arrears: duesArrears, total: duesTotal },

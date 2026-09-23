@@ -10,7 +10,7 @@ Get-Process node -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHan
 Start-Sleep -Seconds 1
 
 # --- Start Backend ---
-Write-Host ''; Write-Host '=== Starting Backend (Express :3001) ===' -ForegroundColor Cyan
+Write-Host ''; Write-Host '=== Starting Backend (Express :3000 + OAuth) ===' -ForegroundColor Cyan
 $backendLog = Join-Path $backendDir 'server-preview.log'
 $psiB = New-Object System.Diagnostics.ProcessStartInfo
 $psiB.FileName = 'node'
@@ -24,7 +24,7 @@ Start-Sleep -Seconds 4
 
 # Check backend health
 try {
-    $health = Invoke-WebRequest -Uri 'http://localhost:3001/api/health' -UseBasicParsing -TimeoutSec 5
+    $health = Invoke-WebRequest -Uri 'http://localhost:3000/api/health' -UseBasicParsing -TimeoutSec 5
     Write-Host "Backend health: $($health.Content)" -ForegroundColor Green
 } catch {
     Write-Host "Backend health check failed: $_" -ForegroundColor Red
@@ -72,7 +72,7 @@ try {
 
 $beOk = $false
 try {
-    $beResp = Invoke-WebRequest -Uri 'http://localhost:3001/api/health' -UseBasicParsing -TimeoutSec 5
+    $beResp = Invoke-WebRequest -Uri 'http://localhost:3000/api/health' -UseBasicParsing -TimeoutSec 5
     $beOk = $true
     Write-Host 'Backend:   OK - ' + $beResp.Content -ForegroundColor Green
 } catch {
@@ -81,12 +81,12 @@ try {
 
 # Show listening ports
 Write-Host ''; Write-Host '=== Listening Ports ===' -ForegroundColor Cyan
-netstat -ano | Select-String 'LISTENING' | Select-String '3001|5173'
+netstat -ano | Select-String 'LISTENING' | Select-String '3000|5173'
 
 # Summary
 Write-Host ''; Write-Host '=== PREVIEW URLs ===' -ForegroundColor Green
 Write-Host '  Frontend:  http://localhost:5173' -ForegroundColor White
-Write-Host '  Backend:   http://localhost:3001' -ForegroundColor White
-Write-Host '  API Health: http://localhost:3001/api/health' -ForegroundColor White
+Write-Host '  Backend:   http://localhost:3000 (OAuth: /oauth/consent)' -ForegroundColor White
+Write-Host '  API Health: http://localhost:3000/api/health' -ForegroundColor White
 Write-Host ''
 Write-Host 'Press Ctrl+C to stop. Servers are running in background.' -ForegroundColor Yellow
