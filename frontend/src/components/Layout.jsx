@@ -42,7 +42,7 @@ export default function Layout() {
       <aside id="app-sidebar" aria-label="Navigation sidebar" className={`sidebar ${open ? 'open' : ''}`}>
         <div className="sidebar-logo">
           <div className="logo-row">
-            <div className="logo-icon">YD</div>
+            <img className="logo-icon" src="/logo.svg" alt="" aria-hidden="true" />
             <div><div className="logo-text">YID Due Ledger</div><div className="logo-sub">Dues Management</div></div>
           </div>
         </div>

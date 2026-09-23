@@ -8,7 +8,7 @@ export default function NotFoundPage() {
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
                   padding: 24, background: 'var(--slate-50)', textAlign: 'center' }}>
       <div>
-        <div className="logo-icon" style={{ margin: '0 auto 20px' }}>YD</div>
+        <img className="logo-icon" src="/logo.svg" alt="" aria-hidden="true" style={{ margin: '0 auto 20px' }} />
         <h1 style={{ fontSize: 44, color: 'var(--slate-900)', marginBottom: 8 }}>404</h1>
         <p style={{ color: 'var(--slate-500)', fontSize: 15.5, marginBottom: 26, maxWidth: 380, lineHeight: 1.6 }}>
           The page you are looking for doesn’t exist or may have been moved.

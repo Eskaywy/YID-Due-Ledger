@@ -46,7 +46,7 @@ export default function ChangePasswordPage() {
       {/* Left branding panel — same as the login page */}
       <div className="login-left">
         <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:'auto'}}>
-          <div className="logo-icon" style={{width:40,height:40,fontSize:15}}>YD</div>
+          <img className="logo-icon" src="/logo.svg" alt="" aria-hidden="true" style={{width:40,height:40}} />
           <div>
             <div style={{color:'#fff',fontWeight:700,fontSize:16,fontFamily:'Space Grotesk,sans-serif'}}>YID Due Ledger</div>
             <div style={{color:'rgba(255,255,255,.55)',fontSize:11}}>Dues Management Platform</div>

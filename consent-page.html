@@ -9,7 +9,7 @@
 body { background: #0f172a; color: #e2e8f0; font-family: 'Inter', sans-serif; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 16px; }
 .consent-card { background: #1e293b; border: 1px solid #334155; border-radius: 14px; width: 100%; max-width: 900px; box-shadow: 0 20px 60px rgba(0,0,0,.4); }
 .consent-header { display: flex; align-items: center; gap: 12px; padding: 20px 24px; border-bottom: 1px solid #334155; }
-.app-logo { width: 40px; height: 40px; background: linear-gradient(135deg,#22c55e,#16a34a); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 700; color: #fff; letter-spacing: .5px; }
+.app-logo { width: 40px; height: 40px; object-fit: cover; border-radius: 8px; flex-shrink: 0; }
 .app-title { font-size: 18px; font-weight: 700; color: #fff; font-family: 'Space Grotesk', sans-serif; }
 .consent-body { display: flex; gap: 24px; padding: 24px; }
 @media (max-width: 700px) { .consent-body { flex-direction: column; gap: 16px; padding: 20px; } }
@@ -20,7 +20,7 @@ body { background: #0f172a; color: #e2e8f0; font-family: 'Inter', sans-serif; mi
 .section-desc { color: #94a3b8; font-size: 13px; line-height: 1.5; margin-bottom: 16px; }
 .client-card { background: #0f172a; border: 1px solid #334155; border-radius: 10px; padding: 16px; }
 .client-header { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
-.client-logo { width: 36px; height: 36px; background: linear-gradient(135deg,#22c55e,#16a34a); border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 700; color: #fff; }
+.client-logo { width: 36px; height: 36px; object-fit: cover; border-radius: 6px; flex-shrink: 0; }
 .client-name { font-size: 15px; font-weight: 600; color: #f1f5f9; }
 .client-desc { color: #94a3b8; font-size: 12px; line-height: 1.4; }
 .scope-list { display: flex; flex-direction: column; gap: 10px; }
@@ -55,14 +55,14 @@ body { background: #0f172a; color: #e2e8f0; font-family: 'Inter', sans-serif; mi
 </head>
 <body>
 <div class="consent-card">
-<div class="consent-header"><div class="app-logo">YD</div><span class="app-title">YID Due Ledger</span></div>
+<div class="consent-header"><img class="app-logo" src="/logo.svg" alt=""><span class="app-title">YID Due Ledger</span></div>
 <div class="consent-body">
 <div class="left-col">
 <div class="login-section"><h2 class="section-title">Sign in to continue</h2><p class="section-desc">You're signing into "YID Due Ledger". Enter your credentials to proceed.</p><form method="POST" action="/oauth/consent"><input type="hidden" name="action" value="login"><input type="hidden" name="client_id" value="yid-web-app"><input type="hidden" name="redirect_uri" value="http://localhost:3000/oauth/callback"><input type="hidden" name="scope" value="openid profile email member_data"><input type="hidden" name="state" value="test123"><div class="form-group"><label class="form-label">Email Address</label><input type="email" name="email" placeholder="you@example.com" required autocomplete="email" class="form-input"></div><div class="form-group"><label class="form-label">Password</label><input type="password" name="password" placeholder="Enter your password" required autocomplete="current-password" class="form-input"></div><button type="submit" class="btn btn-primary btn-lg">Sign In &amp; Continue</button></form><div class="demo-creds"><div class="demo-creds-title">Demo Credentials</div><div class="demo-cred-row"><code>superadmin@drdp.ng</code> / <code>Admin@2025</code></div><div class="demo-cred-row"><code>adewale@drdp.ng</code> / <code>Member@2025</code></div></div></div>
-<div class="client-card"><div class="client-header"><div class="client-logo">YD</div><div><div class="client-name">YID Due Ledger</div><div class="client-tag">OAuth Client</div></div></div><div class="client-desc">Dues Management Platform ΓÇö Lagos & South-West Region Pilot</div></div><h2 class="section-title">Permissions Requested</h2><p class="section-desc">After signing in, YID Due Ledger will ask you to grant access to:</p><div class="scope-pills"><div class="scope-pill"><span class="scope-pill-dot"></span>OpenID Connect</div><div class="scope-pill"><span class="scope-pill-dot"></span>Profile</div><div class="scope-pill"><span class="scope-pill-dot"></span>Email Address</div><div class="scope-pill"><span class="scope-pill-dot"></span>Member Data</div></div>
+<div class="client-card"><div class="client-header"><img class="client-logo" src="/logo.svg" alt=""><div><div class="client-name">YID Due Ledger</div><div class="client-tag">OAuth Client</div></div></div><div class="client-desc">Dues Management Platform ΓÇö Lagos & South-West Region Pilot</div></div><h2 class="section-title">Permissions Requested</h2><p class="section-desc">After signing in, YID Due Ledger will ask you to grant access to:</p><div class="scope-pills"><div class="scope-pill"><span class="scope-pill-dot"></span>OpenID Connect</div><div class="scope-pill"><span class="scope-pill-dot"></span>Profile</div><div class="scope-pill"><span class="scope-pill-dot"></span>Email Address</div><div class="scope-pill"><span class="scope-pill-dot"></span>Member Data</div></div>
 </div>
 <div class="right-col">
-<div class="client-card"><div class="client-header"><div class="client-logo">YD</div><div><div class="client-name">YID Due Ledger</div><div class="client-tag">OAuth Client</div></div></div><div class="client-desc">Dues Management Platform ΓÇö Lagos & South-West Region Pilot</div></div>
+<div class="client-card"><div class="client-header"><img class="client-logo" src="/logo.svg" alt=""><div><div class="client-name">YID Due Ledger</div><div class="client-tag">OAuth Client</div></div></div><div class="client-desc">Dues Management Platform ΓÇö Lagos & South-West Region Pilot</div></div>
 </div>
 </div>
 </div>
