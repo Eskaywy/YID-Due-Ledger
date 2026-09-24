@@ -1,7 +1,7 @@
 {
   "name": "drdp",
   "version": "1.0.0",
-  "description": "YID Due Ledger — secure full-stack web app for member dues tracking",
+  "description": "YISD-DUE-LEDGER — secure full-stack web app for member dues tracking",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -9,6 +9,8 @@
     "build": "cd frontend && npm install && npm run build",
     "build:frontend": "cd frontend && npm install && npm run build",
     "scripts:preview": "node scripts/preview-check.js",
+    "admin:create": "node scripts/create-admin.js",
+    "gate:demo": "node scripts/check-demo-creds.js",
     "deploy:vercel": "vercel --prod",
     "deploy:vercel:preview": "vercel"
   },

@@ -11,6 +11,15 @@ const { initDatabase } = require('./db');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Landing-page branding (approved plan §2.1) — surfaced to the Flutter Web
+// landing via /api/public/site so the title stays in one place.
+const SITE = {
+  brand: 'YISD-DUE-LEDGER',
+  title: 'YISD-DUE-LEDGER',
+  department: 'Youth Information Department',
+  logo: '/logo.svg',
+};
+
 // Behind Vercel / reverse proxies so rate limits see the real client IP.
 app.set('trust proxy', 1);
 
@@ -36,12 +45,17 @@ app.use('/api/auth/', rateLimit({ ...limitOpts, max: 300 }));
 app.use(cookieParser());
 
 app.use('/api/auth',    require('./routes/auth'));
+app.use('/api/public',  require('./routes/public'));
 app.use('/api/members', require('./routes/members'));
 app.use('/api/admin',   require('./routes/admin'));
 app.use('/api/records', require('./routes/records'));
 app.use('/oauth',       require('./routes/oauth'));
 
 app.get('/api/health', (_, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
+app.get('/api/public/site', (_, res) => {
+  res.set('Cache-Control', 'public, max-age=300');
+  res.json(SITE);
+});
 
 // Skip static file serving when running on Vercel — the frontend is served
 // by Vercel's static build (CDN), not by this Express app.
@@ -78,7 +92,7 @@ initDatabase().catch(err => {
 // function (api/index.js). When run directly via `node server.js`, start the
 // HTTP listener for local development and production (self-hosted) mode.
 if (require.main === module) {
-  app.listen(PORT, () => console.log(`YID Due Ledger running on http://localhost:${PORT}`));
+  app.listen(PORT, () => console.log(`YISD-DUE-LEDGER running on http://localhost:${PORT}`));
 }
 
 module.exports = app;

@@ -4,17 +4,26 @@ import { useAuth } from '../context/AuthContext';
 import { Eye, EyeOff, UserPlus, Shield } from 'lucide-react';
 import API, { errorMessage } from '../utils/api';
 
+const OTHER = '__other__';
+
 export default function SignupPage() {
-  const [full_name, setFullName] = useState('');
+  const [firstName, setFirstName] = useState('');
+  const [surname, setSurname] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [position, setPosition] = useState('');
+  const [roleTitle, setRoleTitle] = useState('');
   const [region_id, setRegionId] = useState('');
+  const [region_name, setRegionName] = useState('');
   const [dept_code, setDeptCode] = useState('');
+  const [department_name, setDepartmentName] = useState('');
   const [regions, setRegions] = useState([]);
+  const [departments, setDepartments] = useState([]);
   const [regionsLoading, setRegionsLoading] = useState(true);
   const [regionsError, setRegionsError] = useState('');
+  const [departmentsLoading, setDepartmentsLoading] = useState(true);
+  const [departmentsError, setDepartmentsError] = useState('');
   const [showPass, setShowPass] = useState(false);
   const [showConfirmPass, setShowConfirmPass] = useState(false);
   const [error, setError] = useState('');
@@ -32,30 +41,66 @@ export default function SignupPage() {
       .catch(err => setRegionsError(errorMessage(err, 'Could not load regions.')))
       .finally(() => setRegionsLoading(false));
   };
-  useEffect(() => { loadRegions(); }, []);
+
+  // Departments come from the DB so custom "Other" entries appear for everyone.
+  const loadDepartments = () => {
+    setDepartmentsLoading(true);
+    setDepartmentsError('');
+    API.get('/auth/departments')
+      .then(r => setDepartments(r.data))
+      .catch(err => setDepartmentsError(errorMessage(err, 'Could not load departments.')))
+      .finally(() => setDepartmentsLoading(false));
+  };
+
+  useEffect(() => { loadRegions(); loadDepartments(); }, []);
 
   const handleSubmit = async e => {
     e.preventDefault();
     setError('');
-    
-    if (!full_name || !email || !password || !confirmPassword || !position || !region_id || !dept_code) {
+
+    if (!firstName.trim() || !surname.trim() || !email || !password || !confirmPassword || !position || !region_id || !dept_code) {
       setError('Please fill in all required fields');
       return;
     }
-    
+
+    if (position !== 'Leader' && position !== 'Member') {
+      setError('Position must be Leader or Member');
+      return;
+    }
+
+    if (region_id === OTHER && !region_name.trim()) {
+      setError('Please enter your region name');
+      return;
+    }
+    if (dept_code === OTHER && !department_name.trim()) {
+      setError('Please enter your department name');
+      return;
+    }
+
     if (password !== confirmPassword) {
       setError('Passwords do not match');
       return;
     }
-    
+
     if (password.length < 8) {
       setError('Password must be at least 8 characters');
       return;
     }
-    
+
     setLoading(true);
     try {
-      const user = await signup(full_name, email, password, position, region_id, dept_code);
+      const user = await signup({
+        first_name: firstName.trim(),
+        surname: surname.trim(),
+        email: email.trim(),
+        password,
+        position,
+        role_title: roleTitle.trim(),
+        region_id: region_id === OTHER ? '' : region_id,
+        region_name: region_id === OTHER ? region_name.trim() : '',
+        dept_code: dept_code === OTHER ? '' : dept_code,
+        department_name: dept_code === OTHER ? department_name.trim() : '',
+      });
       navigate(user.role === 'super_admin' ? '/admin' : '/my-records');
     } catch (err) {
       setError(errorMessage(err, 'Signup failed. Please try again.'));
@@ -71,8 +116,8 @@ export default function SignupPage() {
         <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:'auto'}}>
           <img className="logo-icon" src="/logo.svg" alt="" aria-hidden="true" style={{width:40,height:40}} />
           <div>
-            <div style={{color:'#fff',fontWeight:700,fontSize:16,fontFamily:'Space Grotesk,sans-serif'}}>YID Due Ledger</div>
-            <div style={{color:'rgba(255,255,255,.55)',fontSize:11}}>Dues Management Platform</div>
+            <div style={{color:'#fff',fontWeight:700,fontSize:16,fontFamily:'Space Grotesk,sans-serif'}}>YISD-DUE-LEDGER</div>
+            <div style={{color:'rgba(255,255,255,.55)',fontSize:11}}>Youth Information Department</div>
           </div>
         </div>
 
@@ -112,9 +157,14 @@ export default function SignupPage() {
 
           <form onSubmit={handleSubmit}>
             <div className="form-group">
-              <label className="form-label" htmlFor="su-name">Full Name</label>
-              <input id="su-name" type="text" placeholder="John Doe" value={full_name}
-                onChange={e => setFullName(e.target.value)} autoComplete="name"/>
+              <label className="form-label" htmlFor="su-first">First Name *</label>
+              <input id="su-first" type="text" placeholder="John" value={firstName}
+                onChange={e => setFirstName(e.target.value)} autoComplete="given-name" required/>
+            </div>
+            <div className="form-group">
+              <label className="form-label" htmlFor="su-surname">Surname *</label>
+              <input id="su-surname" type="text" placeholder="Doe" value={surname}
+                onChange={e => setSurname(e.target.value)} autoComplete="family-name" required/>
             </div>
             <div className="form-group">
               <label className="form-label" htmlFor="su-email">Email Address</label>
@@ -130,12 +180,24 @@ export default function SignupPage() {
               </select>
             </div>
             <div className="form-group">
+              <label className="form-label" htmlFor="su-role">Role <span style={{fontWeight:400,textTransform:'none',letterSpacing:0}}>(optional)</span></label>
+              <input id="su-role" type="text" placeholder="e.g. Protocol, Usher, Writer" value={roleTitle}
+                onChange={e => setRoleTitle(e.target.value)} maxLength={60}/>
+            </div>
+            <div className="form-group">
               <label className="form-label" htmlFor="su-region">Region *</label>
-              <select id="su-region" value={region_id} onChange={e => setRegionId(e.target.value)} required
-                disabled={regionsLoading} aria-invalid={!!regionsError}>
+              <select id="su-region" value={region_id}
+                onChange={e => { setRegionId(e.target.value); if (e.target.value !== OTHER) setRegionName(''); }}
+                required disabled={regionsLoading} aria-invalid={!!regionsError}>
                 <option value="">{regionsLoading ? 'Loading regions…' : 'Select your region'}</option>
                 {regions.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                <option value={OTHER}>Other…</option>
               </select>
+              {region_id === OTHER && (
+                <input id="su-region-other" type="text" placeholder="Enter your region"
+                  value={region_name} onChange={e => setRegionName(e.target.value)}
+                  style={{marginTop:8}} required aria-label="Custom region name"/>
+              )}
               {regionsError && (
                 <div className="form-error" role="alert" style={{display:'flex',alignItems:'center',gap:8,marginTop:6}}>
                   <span>{regionsError}</span>
@@ -148,11 +210,27 @@ export default function SignupPage() {
             </div>
             <div className="form-group">
               <label className="form-label" htmlFor="su-dept">Department *</label>
-              <select id="su-dept" value={dept_code} onChange={e => setDeptCode(e.target.value)} required>
-                <option value="">Select your department</option>
-                <option value="MED">Media</option>
-                <option value="INF">Information</option>
+              <select id="su-dept" value={dept_code}
+                onChange={e => { setDeptCode(e.target.value); if (e.target.value !== OTHER) setDepartmentName(''); }}
+                required disabled={departmentsLoading} aria-invalid={!!departmentsError}>
+                <option value="">{departmentsLoading ? 'Loading departments…' : 'Select your department'}</option>
+                {departments.map(d => <option key={d.id} value={d.code}>{d.name}</option>)}
+                <option value={OTHER}>Other…</option>
               </select>
+              {dept_code === OTHER && (
+                <input id="su-dept-other" type="text" placeholder="Enter your department"
+                  value={department_name} onChange={e => setDepartmentName(e.target.value)}
+                  style={{marginTop:8}} required aria-label="Custom department name"/>
+              )}
+              {departmentsError && (
+                <div className="form-error" role="alert" style={{display:'flex',alignItems:'center',gap:8,marginTop:6}}>
+                  <span>{departmentsError}</span>
+                  <button type="button" onClick={loadDepartments}
+                    style={{background:'none',border:'none',color:'var(--green-700)',fontWeight:700,cursor:'pointer',fontSize:13,textDecoration:'underline'}}>
+                    Retry
+                  </button>
+                </div>
+              )}
             </div>
             <div className="form-group">
               <label className="form-label" htmlFor="su-password">Password</label>

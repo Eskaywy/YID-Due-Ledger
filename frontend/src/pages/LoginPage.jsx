@@ -30,7 +30,7 @@ export default function LoginPage() {
   const handleSubmit = async e => {
     e.preventDefault();
     setAttempted(true);
-    if (!email || !password) { setError('Please enter your email and password.'); return; }
+    if (!email || !password) { setError('Please enter your email or username and password.'); return; }
     setError(''); setLoading(true);
     try {
       const loggedIn = await login(email, password);
@@ -53,8 +53,8 @@ export default function LoginPage() {
         <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:'auto'}}>
           <img className="logo-icon" src="/logo.svg" alt="" aria-hidden="true" style={{width:40,height:40}} />
           <div>
-            <div style={{color:'#fff',fontWeight:700,fontSize:16,fontFamily:'Space Grotesk,sans-serif'}}>YID Due Ledger</div>
-            <div style={{color:'rgba(255,255,255,.55)',fontSize:11}}>Dues Management Platform</div>
+            <div style={{color:'#fff',fontWeight:700,fontSize:16,fontFamily:'Space Grotesk,sans-serif'}}>YISD-DUE-LEDGER</div>
+            <div style={{color:'rgba(255,255,255,.55)',fontSize:11}}>Youth Information Department</div>
           </div>
         </div>
 
@@ -88,7 +88,7 @@ export default function LoginPage() {
             <span style={{fontSize:13,fontWeight:500,color:'var(--green-600)'}}>Secure Member Portal</span>
           </div>
           <h1 className="login-title">Sign in to your account</h1>
-          <p className="login-subtitle">Enter your registered email and password to continue.</p>
+          <p className="login-subtitle">Enter your email, username or Smart ID to continue.</p>
 
           {showExpired && (
             <div className="alert alert-info" role="status">Your session has expired. Please sign in again.</div>
@@ -97,9 +97,9 @@ export default function LoginPage() {
 
           <form onSubmit={handleSubmit}>
             <div className="form-group">
-              <label className="form-label" htmlFor="login-email">Email Address</label>
-              <input id="login-email" type="email" placeholder="you@example.com" value={email}
-                onChange={e => setEmail(e.target.value)} autoComplete="email" aria-invalid={!!error}/>
+              <label className="form-label" htmlFor="login-identifier">Email or Username</label>
+              <input id="login-identifier" type="text" placeholder="you@example.com or username" value={email}
+                onChange={e => setEmail(e.target.value)} autoComplete="username" aria-invalid={!!error}/>
             </div>
             <div className="form-group">
               <label className="form-label" htmlFor="login-password">Password</label>

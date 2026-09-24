@@ -45,8 +45,8 @@ export default function BatchUploadPage() {
 
   const downloadTemplate = () => {
     const csv = `user_id,email,due_month,due_year,due_amount,due_status,pledge_program,pledge_amount,pledge_status,pledge_date
-LGS-MED-202506-0002,adewale@drdp.ng,6,2025,2000,paid,,,,
-LGS-MED-202506-0002,adewale@drdp.ng,,,,,Annual Dinner 2025,5000,paid,2025-03-15`;
+LAG-MED-1001,member@example.com,6,2025,2000,paid,,,,
+LAG-MED-1001,member@example.com,,,,,Annual Dinner 2025,5000,paid,2025-03-15`;
     const blob = new Blob([csv], { type:'text/csv' });
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement('a'); a.href=url; a.download='yid-due-ledger-upload-template.csv'; a.click();
@@ -177,8 +177,8 @@ LGS-MED-202506-0002,adewale@drdp.ng,,,,,Annual Dinner 2025,5000,paid,2025-03-15`
             <thead><tr><th>Column</th><th>Required</th><th>Description</th><th>Example</th></tr></thead>
             <tbody>
               {[
-                ['user_id','One of two','Member ID code','LGS-MED-202506-0002'],
-                ['email','One of two','Member email address','adewale@drdp.ng'],
+                ['user_id','One of two','Member ID code','LAG-MED-1001'],
+                ['email','One of two','Member email address','member@example.com'],
                 ['due_month','For dues','Month number (1–12)','6'],
                 ['due_year','For dues','4-digit year','2025'],
                 ['due_amount','For dues','Amount in Naira','2000'],

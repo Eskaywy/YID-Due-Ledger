@@ -48,8 +48,8 @@ export default function ChangePasswordPage() {
         <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:'auto'}}>
           <img className="logo-icon" src="/logo.svg" alt="" aria-hidden="true" style={{width:40,height:40}} />
           <div>
-            <div style={{color:'#fff',fontWeight:700,fontSize:16,fontFamily:'Space Grotesk,sans-serif'}}>YID Due Ledger</div>
-            <div style={{color:'rgba(255,255,255,.55)',fontSize:11}}>Dues Management Platform</div>
+            <div style={{color:'#fff',fontWeight:700,fontSize:16,fontFamily:'Space Grotesk,sans-serif'}}>YISD-DUE-LEDGER</div>
+            <div style={{color:'rgba(255,255,255,.55)',fontSize:11}}>Youth Information Department</div>
           </div>
         </div>
 

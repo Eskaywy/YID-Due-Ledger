@@ -13,6 +13,9 @@ const publicUser = (user, regionName = null, regionCode = null) => ({
   id: user.id,
   user_id_code: user.user_id_code ?? null,
   full_name: user.full_name ?? null,
+  first_name: user.first_name ?? null,
+  surname: user.surname ?? null,
+  username: user.username ?? null,
   email: user.email ?? null,
   position: user.position ?? null,
   role_title: user.role_title ?? null,
@@ -37,20 +40,36 @@ const getRegion = async (regionId) => {
 
 router.post('/login', async (req, res) => {
   try {
-    // Accept an email OR a Smart Ledger ID (e.g. LA1-MED-1001) — per the
-    // prototype's signin.html ("Email or Smart ID").
+    // Accept an email, a dedicated username, or a Smart Ledger ID
+    // (e.g. LAG-MED-1001). The admin signs in with username + password;
+    // members normally use email or their Smart ID.
     const identifier = String(req.body.identifier ?? req.body.email ?? '').trim();
     const { password } = req.body;
-    if (!identifier || !password) return res.status(400).json({ error: 'Email / Smart ID and password required' });
+    if (!identifier || !password) {
+      return res.status(400).json({ error: 'Email, username or Smart ID and password required' });
+    }
 
-    const column = identifier.includes('@') ? 'email' : 'user_id_code';
-    const value = identifier.includes('@') ? identifier.toLowerCase() : identifier.toUpperCase();
-    const { data: users, error } = await supabase
-      .from('users')
-      .select('*')
-      .eq(column, value)
-      .eq('is_active', true)
-      .limit(1);
+    const lower = identifier.toLowerCase();
+    const upper = identifier.toUpperCase();
+
+    let users = null;
+    let error = null;
+    if (identifier.includes('@')) {
+      // Email path (members)
+      ({ data: users, error } = await supabase
+        .from('users').select('*')
+        .eq('email', lower).eq('is_active', true).limit(1));
+    } else {
+      // Dedicated username first (stored lowercase), then Smart ID fallback.
+      ({ data: users, error } = await supabase
+        .from('users').select('*')
+        .eq('username', lower).eq('is_active', true).limit(1));
+      if (!error && !users?.length) {
+        ({ data: users, error } = await supabase
+          .from('users').select('*')
+          .eq('user_id_code', upper).eq('is_active', true).limit(1));
+      }
+    }
     if (error) throw error;
     if (!users?.length) return res.status(401).json({ error: 'Invalid credentials' });
 
@@ -129,10 +148,24 @@ router.post('/signup', async (req, res) => {
     const fullName = `${String(first_name || '').trim()} ${String(surname || '').trim()}`.trim()
       || String(full_name || '').trim();
     const roleTitle = String(role_title || '').trim();
+    const firstName = String(first_name || '').trim();
+    const surName = String(surname || '').trim();
+    const pos = String(position || '').trim();
 
     // Validate required fields
     if (!fullName || !email || !password) {
       return res.status(400).json({ error: 'Name, email, and password required' });
+    }
+
+    // Position is a controlled enum (approved plan §3.1): Leader | Member.
+    if (pos && pos !== 'Leader' && pos !== 'Member') {
+      return res.status(400).json({ error: 'Position must be Leader or Member' });
+    }
+    if (fullName.length < 2 || fullName.length > 120) {
+      return res.status(400).json({ error: 'Name must be between 2 and 120 characters' });
+    }
+    if (roleTitle.length > 60) {
+      return res.status(400).json({ error: 'Role must be 60 characters or fewer' });
     }
 
     if (password.length < 8) {
@@ -168,14 +201,14 @@ router.post('/signup', async (req, res) => {
       const { data: defaults, error: defErr } = await supabase
         .from('regions')
         .select('*')
-        .eq('code', 'LGS')
+        .eq('code', 'LAG')
         .limit(1);
       if (defErr) throw defErr;
       region = defaults?.length ? defaults[0] : null;
     }
     if (!region) return res.status(400).json({ error: 'Region is required' });
 
-    // Mint the Smart Ledger ID: REGION-DEPT-serial (e.g. LA1-MED-1001)
+    // Mint the Smart Ledger ID: REGION-DEPT-serial (e.g. LAG-MED-1001)
     const user_id_code = await generateSmartId({
       regionName: region.name,
       regionCode: region.code,
@@ -188,10 +221,12 @@ router.post('/signup', async (req, res) => {
       id: userId,
       user_id_code,
       full_name: fullName,
+      first_name: firstName || fullName.split(' ')[0] || null,
+      surname: surName || fullName.split(' ').slice(1).join(' ') || null,
       role_title: roleTitle || null,
       email: email.toLowerCase().trim(),
       password_hash: passwordHash,
-      position: position || null,
+      position: pos || null,
       region_id: region.id,
       dept_code: dept.code,
       role: 'member',

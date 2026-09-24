@@ -111,7 +111,7 @@ export default function CreateMemberModal({ regions, onClose, onCreated }) {
                 </select>
               </div>
               <div style={{fontSize:12.5,color:'var(--slate-400)',marginTop:4}}>
-                A unique Member ID will be auto-generated. Default password: <code>Member@2025</code>
+                A unique Member ID will be auto-generated. A temporary password will be issued and must be changed at first sign-in.
               </div>
             </div>
             <div className="modal-footer">

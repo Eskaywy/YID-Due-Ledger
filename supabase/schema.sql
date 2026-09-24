@@ -25,7 +25,8 @@ create table if not exists users (
   id                   uuid primary key default gen_random_uuid(),
   user_id_code         text unique,             -- Smart Ledger ID, e.g. LA1-MED-1001
   full_name            text not null,
-  email                text unique not null,
+  username             text unique,             -- dedicated login handle (admin uses this)
+  email                text unique,             -- optional; admin signs in with username
   password_hash        text not null,
   position             text,
   role_title           text,

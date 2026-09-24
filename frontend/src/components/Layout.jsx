@@ -43,7 +43,7 @@ export default function Layout() {
         <div className="sidebar-logo">
           <div className="logo-row">
             <img className="logo-icon" src="/logo.svg" alt="" aria-hidden="true" />
-            <div><div className="logo-text">YID Due Ledger</div><div className="logo-sub">Dues Management</div></div>
+            <div><div className="logo-text">YISD-DUE-LEDGER</div><div className="logo-sub">Youth Information Department</div></div>
           </div>
         </div>
 

@@ -8,11 +8,59 @@ const initDatabase = async () => {
     .from('regions')
     .select('id', { count: 'exact', head: true });
   if (error) throw error;
+
+  // Always ensure the five canonical regions exist (idempotent upsert by
+  // code). This runs regardless of prior data so existing deployments get
+  // the LAG/SWE/NOR/SEA/SST prefix registry from the approved plan.
+  await ensureCanonicalRegions();
+
   if (!count) {
-    console.log('Seeding initial data...');
-    await seedData();
+    const seedDemo = process.env.NODE_ENV !== 'production' && process.env.SEED_DEMO_DATA === 'true';
+    if (seedDemo) {
+      console.log('Seeding demo data (SEED_DEMO_DATA enabled, non-production)...');
+      await seedData();
+    } else {
+      console.log('Empty database initialised with canonical regions only (no demo seed).');
+    }
   } else {
     console.log('Supabase already has data.');
+  }
+};
+
+// Canonical region prefix registry (approved plan §3.1). Codes are 3 uppercase
+// letters and feed the Smart Ledger ID prefix: LAG-MED-1001.
+const CANONICAL_REGIONS = [
+  { name: 'Lagos',       code: 'LAG' },
+  { name: 'South-West',  code: 'SWE' },
+  { name: 'North',       code: 'NOR' },
+  { name: 'South-East',  code: 'SEA' },
+  { name: 'South-South', code: 'SST' },
+];
+
+const ensureCanonicalRegions = async () => {
+  const now = new Date().toISOString();
+  for (const r of CANONICAL_REGIONS) {
+    const { data: existing, error: selErr } = await supabase
+      .from('regions')
+      .select('id, code')
+      .eq('code', r.code)
+      .limit(1);
+    if (selErr) throw selErr;
+    if (existing?.length) {
+      // Normalise the display name if it drifted (e.g. casing/hyphenation).
+      if (existing[0].name !== r.name) {
+        const { error: updErr } = await supabase
+          .from('regions')
+          .update({ name: r.name })
+          .eq('id', existing[0].id);
+        if (updErr) throw updErr;
+      }
+      continue;
+    }
+    const { error: insErr } = await supabase
+      .from('regions')
+      .insert({ id: uuidv4(), name: r.name, code: r.code, created_at: now });
+    if (insErr && insErr.code !== '23505') throw insErr; // tolerate concurrent race
   }
 };
 
@@ -21,45 +69,54 @@ const seedData = async () => {
   const swrId = uuidv4();
   const now = new Date().toISOString();
   const { error: regionErr } = await supabase.from('regions').insert([
-    { id: lgsId, name: 'Lagos', code: 'LGS', created_at: now },
-    { id: swrId, name: 'South-West', code: 'SWR', created_at: now },
+    { id: lgsId, name: 'Lagos', code: 'LAG', created_at: now },
+    { id: swrId, name: 'South-West', code: 'SWE', created_at: now },
   ]);
-  if (regionErr) throw regionErr;
+  if (regionErr && regionErr.code !== '23505') throw regionErr;
 
-  // FIX: users below all set dept_code: 'MED', but no departments row for
-  // it was ever created. dept_code has no FK constraint, so this alone
-  // wouldn't fail -- but leaving it out means the department name/id is
-  // never resolvable later (e.g. anywhere the app looks up 'MED' by code).
+  // Departments used by the seeded members (Information + Media).
   const { error: deptErr } = await supabase.from('departments').insert([
     { id: uuidv4(), name: 'Media', code: 'MED', created_at: now },
+    { id: uuidv4(), name: 'Information', code: 'INF', created_at: now },
   ]);
-  if (deptErr) throw deptErr;
+  if (deptErr && deptErr.code !== '23505') throw deptErr;
+
+  // Resolve the region ids we just ensured exist (they may already have been
+  // present via ensureCanonicalRegions).
+  const resolveRegion = async (code) => {
+    const { data, error } = await supabase.from('regions').select('id').eq('code', code).limit(1);
+    if (error) throw error;
+    return data?.[0]?.id;
+  };
+  const lagId = await resolveRegion('LAG') || lgsId;
+  const sweId = await resolveRegion('SWE') || swrId;
 
   const superAdminId = uuidv4();
-  const superAdminPasswordHash = await bcrypt.hash('Admin@2025', 10);
-  const memberPasswordHash = await bcrypt.hash('Member@2025', 10);
-  // FIX: seq numbers must restart per region (user_id_sequences is keyed
-  // by region_code + dept_code + year_month, see next_user_sequence()).
-  // SWR members were previously numbered 0005/0006, continuing LGS's
-  // count, instead of starting their own region's count at 0001.
+  // Demo credentials come from env only — never hardcoded in source.
+  // The seed runs only when SEED_DEMO_DATA=true and NODE_ENV != production.
+  const superAdminEmail = process.env.SEED_SUPERADMIN_EMAIL || '';
+  const superAdminPassword = process.env.SEED_SUPERADMIN_PASSWORD || '';
+  const memberPassword = process.env.SEED_MEMBER_PASSWORD || '';
+  const superAdminPasswordHash = superAdminPassword ? await bcrypt.hash(superAdminPassword, 10) : null;
+  const memberPasswordHash = memberPassword ? await bcrypt.hash(memberPassword, 10) : null;
   const memberSeeds = [
-    { name: 'Adewale Ogundimu', email: 'adewale@drdp.ng', position: 'Journalist', regionId: lgsId, rc: 'LGS', seq: '0002' },
-    { name: 'Chidinma Okafor', email: 'chidinma@drdp.ng', position: 'Editor', regionId: lgsId, rc: 'LGS', seq: '0003' },
-    { name: 'Babatunde Fashola', email: 'babs@drdp.ng', position: 'Correspondent', regionId: lgsId, rc: 'LGS', seq: '0004' },
-    { name: 'Ngozi Adeyemi', email: 'ngozi@drdp.ng', position: 'Producer', regionId: swrId, rc: 'SWR', seq: '0001' },
-    { name: 'Seun Abegunrin', email: 'seun@drdp.ng', position: 'Presenter', regionId: swrId, rc: 'SWR', seq: '0002' },
-  ];
+    { name: 'Adewale Ogundimu', email: process.env.SEED_MEMBER1_EMAIL || '', position: 'Journalist', regionId: lagId, rc: 'LAG', seq: '0002' },
+    { name: 'Chidinma Okafor', email: process.env.SEED_MEMBER2_EMAIL || '', position: 'Editor', regionId: lagId, rc: 'LAG', seq: '0003' },
+    { name: 'Babatunde Fashola', email: process.env.SEED_MEMBER3_EMAIL || '', position: 'Correspondent', regionId: lagId, rc: 'LAG', seq: '0004' },
+    { name: 'Ngozi Adeyemi', email: process.env.SEED_MEMBER4_EMAIL || '', position: 'Producer', regionId: sweId, rc: 'SWE', seq: '0001' },
+    { name: 'Seun Abegunrin', email: process.env.SEED_MEMBER5_EMAIL || '', position: 'Presenter', regionId: sweId, rc: 'SWE', seq: '0002' },
+  ].filter(m => m.email && memberPasswordHash);
   const memberIds = memberSeeds.map(() => uuidv4());
 
   const userRows = [
     {
       id: superAdminId,
-      user_id_code: 'LGS-MED-202506-0001',
+      user_id_code: 'LAG-MED-202506-0001',
       full_name: 'Super Administrator',
-      email: 'superadmin@drdp.ng',
+      email: superAdminEmail,
       password_hash: superAdminPasswordHash,
       position: 'Super Administrator',
-      region_id: lgsId,
+      region_id: lagId,
       dept_code: 'MED',
       role: 'super_admin',
       is_active: true,
@@ -82,7 +139,7 @@ const seedData = async () => {
     })),
   ];
   const { error: userErr } = await supabase.from('users').insert(userRows);
-  if (userErr) throw userErr;
+  if (userErr && userErr.code !== '23505') throw userErr;
 
   const dueStatuses = ['paid','paid','paid','paid','arrears','pending'];
   const dueMonths   = [1, 2, 3, 4, 5, 6];
@@ -145,26 +202,70 @@ const seedData = async () => {
   console.log('Supabase seed data inserted!');
 };
 
-// ---- Smart Ledger ID minting (ported from the prototype's js/app.js) ----
-// Format: [REGION]-[DEPT]-[serial], e.g. LA1-MED-1001
-const REGION_PREFIX_OVERRIDES = {
-  'Lagos 1': 'LA1',
-  'Lagos 2': 'LA2',
-};
+// ---- Smart Ledger ID minting (approved plan §3.2) ----
+// Canonical format: [3-letter REGION]-[3-letter DEPT]-[serial], e.g. LAG-MED-1001.
+// Region codes come from the canonical registry (LAG/SWE/NOR/SEA/SST) or are
+// derived from custom names; department codes from the stored code (INF/MED)
+// or are derived. Both are forced to 3 uppercase letters.
 
 // First 3 letters of a name, uppercase (Media -> MED, Information -> INF)
 const prefixFromName = (name) =>
   (((name || '').replace(/[^A-Za-z]/g, '').toUpperCase()) + 'XXX').slice(0, 3);
-// Region prefix: curated override, else the stored code, else derived from the name
+
+// Region prefix: the stored 3-letter code wins, else derive from the name.
 const regionPrefixFor = (name, code) =>
-  REGION_PREFIX_OVERRIDES[name] || (code ? String(code).toUpperCase() : null) || prefixFromName(name);
+  (code ? String(code).toUpperCase().slice(0, 3) : null) || prefixFromName(name);
+
+// Enforce the 3-letter shape on any prefix before it reaches an ID.
+const normalizePrefix = (p) => {
+  const s = String(p || '').toUpperCase().replace(/[^A-Z]/g, '');
+  return (s + 'XXX').slice(0, 3);
+};
+
+// Pick a 3-letter code not already used in the table, so custom "Other"
+// regions/departments never collide on a unique code constraint.
+const resolveUniqueCode = async (tableName, base) => {
+  const root = normalizePrefix(base);
+  const { data, error } = await supabase.from(tableName).select('code');
+  if (error) throw error;
+  const taken = new Set((data || []).map(r => String(r.code || '').toUpperCase()));
+  if (!taken.has(root)) return root;
+  const [a, b] = root;
+  // Rotate the third character, then the second, to find a free variant.
+  for (let i = 1; i <= 26; i++) {
+    const c = String.fromCharCode(((root.charCodeAt(2) - 65 + i) % 26) + 65);
+    const cand = a + b + c;
+    if (!taken.has(cand)) return cand;
+  }
+  for (let i = 1; i <= 26; i++) {
+    const b2 = String.fromCharCode(((b.charCodeAt(0) - 65 + i) % 26) + 65);
+    for (let j = 0; j < 26; j++) {
+      const cand = a + b2 + String.fromCharCode(65 + j);
+      if (!taken.has(cand)) return cand;
+    }
+  }
+  return root;
+};
+
+// Parse a composite member ID (new 3-3-serial or legacy 4-part format).
+// New: LAG-MED-1001  → { regionCode, deptCode, serial, format: 'v2' }
+// Legacy: LGS-MED-202506-0001 → { regionCode, deptCode, yearMonth, serial, format: 'v1' }
+// Returns null when the input is not a recognisable member ID.
+const parseMemberId = (raw) => {
+  const v = String(raw || '').trim().toUpperCase();
+  const v2 = /^([A-Z]{3})-([A-Z]{3})-(\d{4,})$/.exec(v);
+  if (v2) return { regionCode: v2[1], deptCode: v2[2], serial: Number(v2[3]), format: 'v2' };
+  const v1 = /^([A-Z0-9]{2,3})-([A-Z]{3})-(\d{6})-(\d{4})$/.exec(v);
+  if (v1) return { regionCode: v1[1], deptCode: v1[2], yearMonth: v1[3], serial: Number(v1[4]), format: 'v1' };
+  return null;
+};
 
 // Serial lives in counters/member_serial and is bumped atomically by the
 // Postgres function next_member_serial() (supabase/schema.sql) so concurrent
-// sign-ups can never mint the same serial (README requirement).
+// sign-ups can never mint the same serial.
 const generateSmartId = async ({ regionName, regionCode, deptName, deptCode }) => {
-  const rPrefix = regionPrefixFor(regionName, regionCode);
-  const dPrefix = (deptCode || prefixFromName(deptName)).toUpperCase();
+  const rPrefix = normalizePrefix(regionPrefixFor(regionName, regionCode));
+  const dPrefix = normalizePrefix(deptCode || prefixFromName(deptName));
   const { data, error } = await supabase.rpc('next_member_serial');
   if (error) throw error;
   const serial = data;
@@ -201,18 +302,25 @@ const findOrCreateNamed = async (tableName, rawName, buildCode) => {
     const row = existing[0];
     return { id: row.id, name: row.name, code: row.code ?? null };
   }
-  const doc = { id: uuidv4(), name, code: buildCode(name), created_at: new Date().toISOString() };
-  const { error: insErr } = await supabase.from(tableName).insert(doc);
-  if (insErr && insErr.code !== '23505') throw insErr; // tolerate a concurrent insert race
-  if (insErr) {
-    // Lost the race — re-select the winner.
+
+  // Insert with a collision-free 3-letter code; retry a few times on a
+  // concurrent unique violation (name or code) before surfacing the error.
+  let lastErr = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const code = await resolveUniqueCode(tableName, buildCode(name));
+    const doc = { id: uuidv4(), name, code, created_at: new Date().toISOString() };
+    const { error: insErr } = await supabase.from(tableName).insert(doc);
+    if (!insErr) return doc;
+    if (insErr.code !== '23505') throw insErr;
+    lastErr = insErr;
+    // Lost a race — if the name now exists, return the winner.
     const { data: winner } = await supabase.from(tableName).select('*').ilike('name', name).limit(1);
     if (winner && winner.length) {
       return { id: winner[0].id, name: winner[0].name, code: winner[0].code ?? null };
     }
-    throw insErr;
+    // Otherwise it was a code collision — loop and pick a different code.
   }
-  return doc;
+  throw lastErr || new Error('Failed to create ' + tableName + ' entry');
 };
 
 // Resolve a department by code first (existing dropdown pick), else by name
@@ -252,4 +360,4 @@ const findOrCreateRegion = async (regionId, regionName) => {
   return findOrCreateNamed('regions', regionName, (n) => regionPrefixFor(n, null));
 };
 
-module.exports = { initDatabase, supabase, generateUserId, generateSmartId, prefixFromName, regionPrefixFor, findOrCreateDepartment, findOrCreateRegion };
+module.exports = { initDatabase, supabase, generateUserId, generateSmartId, parseMemberId, prefixFromName, regionPrefixFor, findOrCreateDepartment, findOrCreateRegion };

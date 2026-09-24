@@ -1,6 +1,6 @@
-# YID Due Ledger
+# YISD-DUE-LEDGER
 
-A secure, full-stack web application for the Lagos & South-West Region pilot programme.
+A secure, full-stack web application for the Youth Information Department.
 Members verify their own records; the Super Admin manages everything.
 
 ---
@@ -16,14 +16,56 @@ Members verify their own records; the Super Admin manages everything.
 
 ---
 
-## Demo Credentials
+## Environment flags (security)
 
-| Role        | Email                  | Password     |
-|-------------|------------------------|--------------|
-| Super Admin | superadmin@drdp.ng     | Admin@2025   |
-| Member      | adewale@drdp.ng        | Member@2025  |
-| Member      | chidinma@drdp.ng       | Member@2025  |
-| Member      | ngozi@drdp.ng          | Member@2025  |
+Demo/demo-seed credentials are **disabled by default** and are never shown in
+the UI or usable in production. Two opt-in flags govern them for local
+development only:
+
+| Flag              | Default  | Effect                                                                 |
+|-------------------|----------|------------------------------------------------------------------------|
+| `DEMO_MODE`       | off      | Enables the in-memory OAuth demo users — **ignored when `NODE_ENV=production`** |
+| `SEED_DEMO_DATA`  | off      | Enables seeding demo users/dues on first boot — **ignored when `NODE_ENV=production`** |
+
+Production accounts must be created explicitly (via admin or signup) with
+credentials you generate. See `.env.example`.
+
+---
+
+## Create the first Super Admin
+
+Self-signup always creates a `member` account, and demo seeding is disabled by
+default — so on a **fresh install (empty `users` table)** you bootstrap the first
+admin with the provisioning script. The admin signs in with a **dedicated
+username + password** — no email required:
+
+```bash
+# Recommended: pass credentials via environment variables
+ADMIN_USERNAME=admin ADMIN_PASSWORD='your-strong-password' npm run admin:create
+```
+
+Or with flags:
+
+```bash
+node scripts/create-admin.js --username=admin --password='your-strong-password'
+```
+
+| Flag | Purpose |
+|------|---------|
+| `--username=`, `--password=` | **Required** login credentials (or `ADMIN_USERNAME` / `ADMIN_PASSWORD`) |
+| `--email=`, `--name=` | Optional contact email / display name (or `ADMIN_EMAIL` / `ADMIN_NAME`) |
+| `--force` | Add/promote another admin when one already exists |
+| `--must-change-password` | Force a password change on first sign-in |
+| `--dry-run` | Validate and report; writes nothing |
+
+The script is safe to re-run: it **creates** a new admin, **promotes** an
+existing account that already owns the username (or the optional email), and
+refuses to run if an admin already exists (unless `--force`). It also ensures
+the canonical `LAG`/`MED` rows exist so the Smart ID (e.g. `LAG-MED-1001`) can
+be minted. Requires `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` in `.env`.
+
+Apply `supabase/migrations/20260924000002_admin_username.sql` first — it adds
+the `users.username` column (unique, lowercase) and makes `email` optional.
 
 ---
 
@@ -255,18 +297,17 @@ The server includes a built-in OAuth 2.0 / OpenID Connect authorization server o
 
 ### Demo Users (in-memory, bcrypt hashed at startup)
 
-| Email | Password | Role |
-|-------|----------|------|
-| `superadmin@drdp.ng` | `Admin@2025` | `super_admin` |
-| `adewale@drdp.ng` | `Member@2025` | `member` |
+Demo users are **disabled by default**. To use them for local OAuth testing,
+set `DEMO_MODE=true` in `.env` while `NODE_ENV` is not `production`.
+No credentials are documented here; production must never enable this flag.
 
 ### Quick Test
 
 ```bash
-# 1. Login (programmatic)
+# 1. Login (programmatic) — use a real/dev account you created
 curl -X POST http://localhost:3000/oauth/login \
   -H "Content-Type: application/json" \
-  -d '{"email":"superadmin@drdp.ng","password":"Admin@2025"}'
+  -d '{"email":"<your-dev-email>","password":"<your-password>"}'
 
 # 2. Use the returned access_token to call userinfo
 curl http://localhost:3000/oauth/userinfo \
@@ -274,7 +315,7 @@ curl http://localhost:3000/oauth/userinfo \
 
 # 3. Consent flow (browser-based)
 open http://localhost:3000/oauth/consent
-# → Login with demo credentials → Approve → callback shows access token
+# → Login with your dev account → Approve → callback shows access token
 ```
 
 ### OIDC Discovery
