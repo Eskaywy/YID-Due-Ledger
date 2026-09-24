@@ -18,11 +18,13 @@ class ApiClient {
     final site = await _getJson('/api/public/site');
     final next = await _getJson('/api/public/events/next');
     return LandingData(
-      site: SiteInfo.fromJson(site is Map ? site : const {}),
+      site: SiteInfo.fromJson(
+        site is Map<String, dynamic> ? site : const <String, dynamic>{},
+      ),
       event: EventModel.fromJson(
-        (next is Map && next['event'] is Map)
+        (next is Map && next['event'] is Map<String, dynamic>)
             ? next['event'] as Map<String, dynamic>
-            : const {},
+            : const <String, dynamic>{},
         present: (next is Map && next['event'] is Map),
       ),
       serverTime: DateTime.tryParse(

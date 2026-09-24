@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:ui';
 
 import 'package:flutter/material.dart';
 
@@ -54,9 +53,9 @@ class _CountdownTimerState extends State<CountdownTimer> {
   @override
   Widget build(BuildContext context) {
     if (_remaining == Duration.zero) {
-      return const Semantics(
+      return Semantics(
         label: 'The program has started',
-        child: Text('The program has started!'),
+        child: const Text('The program has started!'),
       );
     }
     final reduceMotion = MediaQuery.disableAnimationsOf(context);

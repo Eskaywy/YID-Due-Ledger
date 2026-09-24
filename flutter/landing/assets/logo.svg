@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="logo-title logo-description">
+  <title id="logo-title">ISD logo</title>
+  <desc id="logo-description">A red sparkle figure above the ISD wordmark on a black background.</desc>
+  <rect width="512" height="512" rx="28" fill="#080808"/>
+  <g fill="#ef1b24">
+    <path d="M256 42c5 34 14 47 48 56-34 9-43 22-48 56-5-34-14-47-48-56 34-9 43-22 48-56Z"/>
+    <path d="M164 108c3 14 9 20 23 23-14 3-20 9-23 23-3-14-9-20-23-23 14-3 20-9 23-23ZM348 108c3 14 9 20 23 23-14 3-20 9-23 23-3-14-9-20-23-23 14-3 20-9 23-23Z"/>
+    <circle cx="256" cy="202" r="23"/>
+    <path d="M218 266c5-29 19-47 38-47s33 18 38 47l10 27h-31l-17-36-17 36h-31l10-27Z"/>
+  </g>
+  <g fill="#ef1b24">
+    <rect x="88" y="310" width="52" height="192" rx="5"/>
+    <path d="M328 329H196c-27 0-46 17-46 41s19 41 46 41h80c27 0 46 17 46 41s-19 41-46 41h-66" fill="none" stroke="#ef1b24" stroke-width="38" stroke-linecap="round" stroke-linejoin="round"/>
+    <path fill-rule="evenodd" d="M355 310h40c38 0 68 34 68 96s-30 96-68 96h-40V310Zm40 38v116c21 0 35-20 35-58s-14-58-35-58Z"/>
+  </g>
+</svg>

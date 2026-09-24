@@ -5,7 +5,7 @@ import 'package:flutter_animate/flutter_animate.dart';
 
 import '../models/event.dart';
 import '../services/api_client.dart';
-import '../widgets/countdown_timer.dart';
+import '../services/url_launcher.dart';
 import '../widgets/event_showcase.dart';
 import '../widgets/hero_section.dart';
 
@@ -61,11 +61,12 @@ class _HomePageState extends State<HomePage> {
                   site: data.site,
                   event: data.event,
                   serverTime: data.serverTime,
-                ).fadeIn(duration: 600.ms).slideY(begin: 0.05),
+                ).animate().fadeIn(duration: 600.ms).slideY(begin: 0.05),
               ),
               if (data.event != null)
                 SliverToBoxAdapter(
                   child: EventShowcase(event: data.event!)
+                      .animate()
                       .fadeIn(duration: 600.ms, delay: 200.ms),
                 ),
               const SliverToBoxAdapter(child: _Footer()),
